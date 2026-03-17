@@ -1,0 +1,2 @@
+{"id":"q1","question":"If x=2 and y=3, what is x+y?","gold_answer":"5","task":"math"}
+{"id":"q2","question":"What is the capital of France?","gold_answer":"Paris","task":"nonmath","evidence":["France's capital city is Paris."]}

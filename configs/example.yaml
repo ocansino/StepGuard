@@ -1,0 +1,16 @@
+run_name: "dev_smoke_test"
+dataset_path: "data/raw/questions.jsonl"   # you’ll create this next
+output_dir: "data/runs"
+
+# placeholders for later
+model:
+  name: "stub-model"
+  prompt_id: "cot_v1"
+
+scoring:
+  tau: 0.8
+  epsilon: 0.02
+  max_iters: 2
+
+ablation:
+  enabled: false
