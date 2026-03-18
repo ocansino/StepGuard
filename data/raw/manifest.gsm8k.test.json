@@ -1,0 +1,7 @@
+{
+  "dataset_name": "gsm8k",
+  "config_name": "main",
+  "split": "test",
+  "out_path": "data\\raw\\gsm8k_test.jsonl",
+  "created_at_utc": "2026-03-18T08:22:55.606944+00:00"
+}

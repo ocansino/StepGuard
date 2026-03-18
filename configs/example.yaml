@@ -1,5 +1,5 @@
 run_name: "dev_smoke_test"
-dataset_path: "data/raw/questions.jsonl"   # you’ll create this next
+dataset_path: "data/raw/gsm8k_test_20.jsonl"   
 output_dir: "data/runs"
 
 # placeholders for later

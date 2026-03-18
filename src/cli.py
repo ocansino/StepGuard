@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+from .datasets_prep import prepare_gsm8k, prepare_strategyqa
 import typer
 
 from .config import load_config
@@ -13,6 +14,26 @@ app = typer.Typer(add_completion=False)
 def run_dir(base_output_dir: str, run_name: str) -> Path:
     return Path(base_output_dir) / run_name
 
+@app.command("prepare-dataset")
+def prepare_dataset(
+    name: str = typer.Option(..., "--name", help="gsm8k or strategyqa"),
+    split: str = typer.Option("test", "--split", help="train/test/validation"),
+    out_path: Optional[str] = typer.Option(None, "--out", help="Output JSONL path"),
+):
+    name = name.lower().strip()
+    if out_path is None:
+        out = Path("data/raw") / f"{name}_{split}.jsonl"
+    else:
+        out = Path(out_path)
+
+    if name == "gsm8k":
+        n = prepare_gsm8k(split=split, out_path=out)
+    elif name == "strategyqa":
+        n = prepare_strategyqa(split=split, out_path=out)
+    else:
+        raise typer.BadParameter("name must be one of: gsm8k, strategyqa")
+
+    typer.echo(f"Wrote {n} examples to {out}")
 
 @app.command("generate-traces")
 def generate_traces(config: str = typer.Option(..., "--config", "-c")):

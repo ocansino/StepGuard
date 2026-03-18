@@ -4,7 +4,7 @@
   "config_path": "configs/example.yaml",
   "config": {
     "run_name": "dev_smoke_test",
-    "dataset_path": "data/raw/questions.jsonl",
+    "dataset_path": "data/raw/gsm8k_test_20.jsonl",
     "output_dir": "data/runs",
     "model": {
       "name": "stub-model",
@@ -19,6 +19,6 @@
       "enabled": false
     }
   },
-  "started_at_utc": "2026-03-17T02:17:54.798975+00:00",
-  "git_commit": "3953f6ffcc0f39d6adadb0b8a88c5ab758c364d3"
+  "started_at_utc": "2026-03-18T08:28:37.625613+00:00",
+  "git_commit": "5411c9370fde1830fac531b9dfaeed8988073cfd"
 }
