@@ -1,0 +1,27 @@
+{
+  "run_name": "gsm8k_gemini_dev_1",
+  "command": "score-traces",
+  "config_path": "configs/gsm8k_gemini_dev.yaml",
+  "config": {
+    "run_name": "gsm8k_gemini_dev_1",
+    "dataset_path": "data/raw/gsm8k_test_1.jsonl",
+    "output_dir": "data/runs",
+    "model": {
+      "provider": "gemini",
+      "name": "gemini-2.5-flash",
+      "prompt_id": "cot_steps_v1",
+      "temperature": 0.2,
+      "max_output_tokens": 800
+    },
+    "scoring": {
+      "risk_threshold": 0.8,
+      "improvement_threshold": 0.02,
+      "max_iters": 2
+    },
+    "ablation": {
+      "enabled": false
+    }
+  },
+  "started_at_utc": "2026-04-09T05:59:42.469058+00:00",
+  "git_commit": "662c1b0a4c892796c4ddabc6d60a712752bb7c82"
+}

@@ -8,8 +8,8 @@ model:
   prompt_id: "cot_v1"
 
 scoring:
-  tau: 0.8
-  epsilon: 0.02
+  risk_threshold: 0.8
+  improvement_threshold: 0.02
   max_iters: 2
 
 ablation:

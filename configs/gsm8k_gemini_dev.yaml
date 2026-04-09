@@ -1,0 +1,18 @@
+run_name: "gsm8k_gemini_dev_1"
+dataset_path: "data/raw/gsm8k_test_1.jsonl"
+output_dir: "data/runs"
+
+model:
+  provider: "gemini"
+  name: "gemini-2.5-flash"
+  prompt_id: "cot_steps_v1"
+  temperature: 0.2
+  max_output_tokens: 800
+
+scoring: #these values don't do much right now, but will in the future
+  risk_threshold: 0.8
+  improvement_threshold: 0.02
+  max_iters: 2
+
+ablation:
+  enabled: false

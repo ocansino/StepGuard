@@ -8,6 +8,8 @@ from .io_utils import read_jsonl, write_jsonl
 from .manifest import make_manifest, write_manifest
 from .schemas import make_base_record
 
+from .providers.gemini_client import GeminiClient
+
 app = typer.Typer(add_completion=False)
 
 
@@ -35,21 +37,30 @@ def prepare_dataset(
 
     typer.echo(f"Wrote {n} examples to {out}")
 
+# prompt the model and get the chain of thought trace
 @app.command("generate-traces")
 def generate_traces(config: str = typer.Option(..., "--config", "-c")):
     cfg = load_config(config)
     outdir = run_dir(cfg.output_dir, cfg.run_name)
     outdir.mkdir(parents=True, exist_ok=True)
+    model_cfg = cfg.raw.get("model", {})
+    gen_model = model_cfg.get("name", "gemini-2.0-flash")
+    temperature = float(model_cfg.get("temperature", 0.2))
+    max_output_tokens = int(model_cfg.get("max_output_tokens", 800))
+
+    gem = GeminiClient(model=gen_model)
 
     manifest = make_manifest(cfg.run_name, "generate-traces", config, cfg.raw)
     write_manifest(outdir / "manifest.generate.json", manifest)
 
     records = []
     for row in read_jsonl(cfg.dataset_path):
-        # STUB: fake a chain-of-thought style trace
         q = row["question"]
-        trace = f"Step 1: Understand the question.\nStep 2: Compute or recall answer.\nStep 3: Provide final."
-        ans = row.get("gold_answer", "UNKNOWN")  # stub uses gold if present
+        trace, ans = gem.generate_trace(
+            q,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+        )
         records.append(
             make_base_record(
                 rid=row["id"],
@@ -68,7 +79,7 @@ def generate_traces(config: str = typer.Option(..., "--config", "-c")):
     write_jsonl(outdir / "generated.jsonl", records)
     typer.echo(f"Wrote {len(records)} records to {outdir/'generated.jsonl'}")
 
-
+# given the trace, score it, WIP
 @app.command("score-traces")
 def score_traces(
     config: str = typer.Option(..., "--config", "-c"),
@@ -83,19 +94,22 @@ def score_traces(
     write_manifest(outdir / "manifest.score.json", manifest)
 
     scored = []
-    tau = cfg.raw.get("scoring", {}).get("tau", 0.8)
+    scoring_cfg = cfg.raw.get("scoring", {})
+    tau = scoring_cfg.get("risk_threshold", scoring_cfg.get("tau", 0.8))
 
     for rec in read_jsonl(inpath):
-        # STUB: step splitting by lines
-        steps = [s.strip() for s in rec["model_trace"].splitlines() if s.strip()]
+        raw_lines = [s.strip() for s in rec["model_trace"].splitlines() if s.strip()]
 
-        # STUB: fake scores (replace later)
+        # Keep only reasoning steps (drop the final answer line)
+        steps = [ln for ln in raw_lines if ln.lower().startswith("step ")]
+
+        # fake scores (replace later)
         verifier = [0.1 for _ in steps]
         contradiction = [0.05 for _ in steps]
         evidence_support = None  # enabled later for non-math
 
-        risks = [min(1.0, v + c) for v, c in zip(verifier, contradiction)]
-        earliest = next((i for i, r in enumerate(risks) if r > tau), None)
+        risks = None 
+        earliest = None 
 
         rec2 = dict(rec)
         rec2.update(
@@ -116,6 +130,72 @@ def score_traces(
     typer.echo(f"Wrote {len(scored)} records to {outdir/'scored.jsonl'}")
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# STUB, DOES NOTHING EXCEPT RETURNS FAKE INFO
 @app.command("repair-traces")
 def repair_traces(
     config: str = typer.Option(..., "--config", "-c"),
@@ -154,6 +234,7 @@ def repair_traces(
     typer.echo(f"Wrote {len(repaired)} records to {outdir/'repaired.jsonl'}")
 
 
+# STUB, DOES NOTHING YET BUT RETURN FAKE INFO
 @app.command("evaluate")
 def evaluate(
     config: str = typer.Option(..., "--config", "-c"),
