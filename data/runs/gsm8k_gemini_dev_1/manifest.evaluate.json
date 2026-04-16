@@ -1,6 +1,6 @@
 {
   "run_name": "gsm8k_gemini_dev_1",
-  "command": "generate-traces",
+  "command": "evaluate",
   "config_path": "configs/gsm8k_gemini_dev.yaml",
   "config": {
     "run_name": "gsm8k_gemini_dev_1",
@@ -22,6 +22,6 @@
       "enabled": false
     }
   },
-  "started_at_utc": "2026-04-16T06:11:34.691307+00:00",
+  "started_at_utc": "2026-04-16T06:29:39.808291+00:00",
   "git_commit": "4d5e6ced996e4e72490966d2869e92a3b116ba1d"
 }

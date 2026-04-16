@@ -1,8 +1,8 @@
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Tuple, Any
 from .datasets_prep import prepare_gsm8k, prepare_strategyqa
 import typer
-
+import re
 from .config import load_config
 from .io_utils import read_jsonl, write_jsonl
 from .manifest import make_manifest, write_manifest
@@ -10,11 +10,58 @@ from .schemas import make_base_record
 
 from .providers.gemini_client import GeminiClient
 
-app = typer.Typer(add_completion=False)
+from .scorers.nli import NLIScorer
 
+app = typer.Typer(add_completion=False)
+_NUM_RE = re.compile(r"[-+]?\d*\.?\d+")
 
 def run_dir(base_output_dir: str, run_name: str) -> Path:
     return Path(base_output_dir) / run_name
+
+def normalize_gsm8k_answer(text: Optional[str]) -> Optional[str]:
+    """
+    Returns a canonical numeric string for GSM8K-style answers.
+    Examples:
+      "$18" -> "18"
+      "18.0" -> "18"
+      "The answer is 18 dollars." -> "18"
+    """
+    if text is None:
+        return None
+
+    s = str(text).strip().lower()
+    if not s:
+        return None
+
+    # remove common clutter
+    s = s.replace(",", "")
+    s = s.replace("$", "")
+
+    nums = _NUM_RE.findall(s)
+    if not nums:
+        return None
+
+    # GSM8K final answer is usually the last number mentioned
+    num_str = nums[-1]
+
+    # canonicalize: int if it's an integer, else float stripped
+    try:
+        val = float(num_str)
+    except ValueError:
+        return None
+
+    if abs(val - round(val)) < 1e-9:
+        return str(int(round(val)))
+
+    # remove trailing zeros for floats
+    out = f"{val:.10f}".rstrip("0").rstrip(".")
+    return out
+
+
+def gsm8k_exact_match(pred: Optional[str], gold: Optional[str]) -> bool:
+    p = normalize_gsm8k_answer(pred)
+    g = normalize_gsm8k_answer(gold)
+    return (p is not None) and (g is not None) and (p == g)
 
 @app.command("prepare-dataset")
 def prepare_dataset(
@@ -89,7 +136,7 @@ def score_traces(
     outdir = run_dir(cfg.output_dir, cfg.run_name)
     outdir.mkdir(parents=True, exist_ok=True)
     inpath = Path(input_path) if input_path else (outdir / "generated.jsonl")
-
+    nli = NLIScorer(model_name="FacebookAI/roberta-large-mnli")
     manifest = make_manifest(cfg.run_name, "score-traces", config, cfg.raw)
     write_manifest(outdir / "manifest.score.json", manifest)
 
@@ -103,13 +150,25 @@ def score_traces(
         # Keep only reasoning steps (drop the final answer line)
         steps = [ln for ln in raw_lines if ln.lower().startswith("step ")]
 
-        # fake scores (replace later)
+        # Verifier is still stubbed for now
         verifier = [0.1 for _ in steps]
-        contradiction = [0.05 for _ in steps]
+
+        # NLI contradiction score per step (compare to previous 1–2 steps)
+        contradiction = []
+        for i, step in enumerate(steps):
+            if i == 0:
+                contradiction.append(0.0)
+                continue
+            prev = steps[max(0, i - 2): i]
+            premise = "\n".join(prev)
+            p_contra = nli.contradiction_prob(premise=premise, hypothesis=step)
+            contradiction.append(p_contra)
+
         evidence_support = None  # enabled later for non-math
 
-        risks = None 
-        earliest = None 
+        # Risk + earliest bad step
+        risks = [min(1.0, v + c) for v, c in zip(verifier, contradiction)]
+        earliest = next((i for i, r in enumerate(risks) if r > tau), None)
 
         rec2 = dict(rec)
         rec2.update(
@@ -254,8 +313,18 @@ def evaluate(
         total += 1
         gold = rec.get("gold_answer")
         pred = rec.get("repaired_answer") or rec.get("model_answer")
-        if gold is not None and pred is not None and str(pred).strip() == str(gold).strip():
-            correct += 1
+        task = rec.get("task")
+
+        if gold is None or pred is None:
+            continue
+
+        if task == "math":
+            if gsm8k_exact_match(pred, gold):
+                correct += 1
+        else:
+            # keep old string match for now (we'll improve non-math later)
+            if str(pred).strip().lower() == str(gold).strip().lower():
+                correct += 1
 
     metrics = {"total": total, "exact_match": (correct / total if total else 0.0)}
     (outdir / "metrics.json").write_text(__import__("json").dumps(metrics, indent=2), encoding="utf-8")
