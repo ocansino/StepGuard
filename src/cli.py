@@ -96,7 +96,7 @@ def generate_traces(config: str = typer.Option(..., "--config", "-c")):
     max_output_tokens = int(model_cfg.get("max_output_tokens", 800))
 
     gem = GeminiClient(model=gen_model)
-
+    
     manifest = make_manifest(cfg.run_name, "generate-traces", config, cfg.raw)
     write_manifest(outdir / "manifest.generate.json", manifest)
 
@@ -140,6 +140,10 @@ def score_traces(
     manifest = make_manifest(cfg.run_name, "score-traces", config, cfg.raw)
     write_manifest(outdir / "manifest.score.json", manifest)
 
+    model_cfg = cfg.raw.get("model", {})
+    judge_model = model_cfg.get("name", "gemini-2.5-flash")  # same model for now
+    gem_judge = GeminiClient(model=judge_model)
+
     scored = []
     scoring_cfg = cfg.raw.get("scoring", {})
     tau = scoring_cfg.get("risk_threshold", scoring_cfg.get("tau", 0.8))
@@ -150,8 +154,27 @@ def score_traces(
         # Keep only reasoning steps (drop the final answer line)
         steps = [ln for ln in raw_lines if ln.lower().startswith("step ")]
 
-        # Verifier is still stubbed for now
-        verifier = [0.1 for _ in steps]
+        # Get verifier judgments in one call
+        judge_results = gem_judge.judge_steps(
+            question=rec["question"],
+            steps=steps,
+            temperature=0.0,
+            max_output_tokens=2000,
+        )
+
+        # Convert to per-step verifier list (p_wrong)
+        verifier = [0.5] * len(steps)  # default fallback
+        for item in judge_results:
+            try:
+                idx = int(item.get("step_index"))
+                p_wrong = float(item.get("p_wrong"))
+                if 0 <= idx < len(steps):
+                    verifier[idx] = max(0.0, min(1.0, p_wrong))
+            except Exception:
+                continue
+        if len(verifier) != len(steps):
+            # Shouldn't happen with our mapping, but just in case
+            verifier = (verifier + [0.5] * len(steps))[:len(steps)]
 
         # NLI contradiction score per step (compare to previous 1–2 steps)
         contradiction = []
