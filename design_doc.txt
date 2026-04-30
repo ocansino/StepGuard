@@ -1,0 +1,369 @@
+StepGuard: Iterative Process Monitoring and Targeted Suffix Repair for Improving LLM Reasoning
+
+StepGuard is a research harness for improving and evaluating LLM reasoning reliability through process monitoring: it scores step-by-step reasoning traces, identifies the earliest risky step (a step likely to be invalid or lead to downstream errors), and applies targeted suffix repair by regenerating only the minimal suffix of the reasoning trace.
+
+Motivation and Goal
+
+LLMs often produce reasoning steps that look plausible but contain:
+
+Unsupported assumptions
+Invalid logical jumps
+Contradictions
+Logical gaps
+
+Rather than evaluating only the final answer, StepGuard evaluates the reasoning process step-by-step and supports targeted repair strategies.
+
+Core Pipeline
+Generate reasoning trace + answer and split trace into steps
+Score each step (verifier + contradiction; evidence support later)
+Compute per-step risk and find the earliest risky step
+Repair by regenerating the suffix starting at the earliest risky step
+(WIP) Re-score repaired trace and iterate until improvement plateaus (stopping rule)
+Project Structure
+src/
+  cli.py            - Typer CLI commands (prepare, generate, score, repair, evaluate, run)
+  config.py         - Loads YAML configs
+  io_utils.py       - JSONL read/write helpers
+  datasets_prep.py  - HuggingFace dataset exporter to JSONL schema
+  eval_utils.py     - Evaluation + GSM8K answer normalization
+
+  scorers/
+    nli.py          - RoBERTa-large-MNLI contradiction scorer
+
+  providers/
+    gemini_client.py - Gemini generator/judge (legacy/prototype)
+    openai_client.py - OpenAI generator/judge (current provider)
+configs/
+  gsm8k_gemini_dev.yaml  - Gemini dev config (optional)
+  gsm8k_openai_dev.yaml  - OpenAI dev config (current)
+data/
+  raw/   - exported datasets in JSONL
+  runs/  - outputs: generated/scored/repaired traces + metrics + manifests
+Data Format (JSONL)
+Generated trace schema (generated.jsonl)
+{
+  "id": "...",                 // question id
+  "question": "...",           // source question
+  "task": "math|nonmath",       // task category
+  "source": "...",             // dataset identifier (e.g., gsm8k/main/test)
+  "gold_answer": "...",         // ground truth answer (if available)
+  "evidence": [...],            // optional (used later for StrategyQA evidence alignment)
+  "model": "...",               // model name (e.g., gpt-5.4-mini)
+  "prompt_id": "...",           // prompt version ID
+  "model_trace": "...",         // step-by-step reasoning trace
+  "model_answer": "..."         // extracted final answer from trace
+}
+Scored schema (scored.jsonl)
+
+Adds step-level breakdown and scores:
+
+{
+  "steps": ["Step 1: ...", "Step 2: ...", ...],      // reasoning steps only (Final answer excluded)
+  "scores": {
+    "verifier": [0.0, 0.2, ...],                     // per-step probability of being wrong (p_wrong)
+    "contradiction": [0.0, 0.1, ...],                // per-step contradiction probability
+    "evidence_support": null                         // reserved for non-math later
+  },
+  "risks": [0.1, 0.3, ...],                          // combined per-step risk
+  "earliest_bad_step": null | 0 | 1 | ...            // first step where risk crosses threshold
+}
+Repaired schema (repaired.jsonl)
+
+Adds repair outputs:
+
+{
+  "repaired_trace": "...",         // full repaired trace (prefix + regenerated suffix)
+  "repaired_answer": "...",        // extracted final answer from repaired trace
+  "logs": {
+    "repair": {
+      "performed": true|false,
+      "k": 1,
+      "next_step_number": 2
+    }
+  }
+}
+CLI Commands
+prepare-dataset
+
+Exports datasets from HuggingFace into JSONL format for the pipeline.
+
+Example:
+
+GSM8K test export to data/raw/gsm8k_test.jsonl
+generate-traces
+
+Reads dataset JSONL and generates reasoning trace + answer for each question using the chosen provider.
+Outputs generated.jsonl.
+
+score-traces
+
+Reads generated.jsonl and computes:
+
+verifier score per step (LLM judge)
+contradiction score per step (NLI)
+combined risk score
+earliest risky step index (earliest_bad_step)
+
+Outputs scored.jsonl.
+
+Note: A step is considered “risky” if its risk exceeds the threshold (risk_threshold), not below it.
+
+repair-traces
+
+Per record, if earliest_bad_step = k, keep prefix steps steps[:k] and regenerate suffix starting at step k+1.
+Outputs repaired.jsonl.
+
+evaluate
+
+Computes aggregate metrics (currently exact match, with GSM8K normalization).
+
+run-pipeline
+
+Runs end-to-end stages in order:
+generate → score → repair → evaluate
+
+Iteration logic (repair → re-score → repeat until plateau) is planned as the next phase.
+
+Scoring Details (Implemented)
+Step splitting
+
+Given model_trace, reasoning steps are extracted as:
+
+steps = [line for line in trace_lines if line.lower().startswith("step ")]
+
+The Final answer: line is excluded from steps.
+
+Contradiction score (RoBERTa-large-MNLI)
+
+For each step i, define:
+
+Premise = previous 1–2 steps:
+premise
+i
+	​
+
+=s
+i−2
+	​
+
+⊕s
+i−1
+	​
+
+
+(adjusted for early steps)
+
+Hypothesis = current step:
+hypothesis
+i
+	​
+
+=s
+i
+	​
+
+
+RoBERTa-MNLI returns probabilities for:
+
+contradiction / neutral / entailment
+
+We define contradiction score:
+
+c
+i
+	​
+
+=P(contradiction∣premise
+i
+	​
+
+,hypothesis
+i
+	​
+
+)
+
+By definition, c
+0
+	​
+
+=0.
+
+Interpretation:
+
+c
+i
+	​
+
+≈0: no contradiction detected
+c
+i
+	​
+
+→1: strong contradiction detected
+Verifier score (LLM judge, batched per example)
+
+For each record, StepGuard calls the provider’s judge once with:
+
+the question
+the list of steps
+
+The judge returns JSON like:
+
+{"results":[{"step_index":0,"verdict":"valid","p_wrong":0.0}, ...]}
+
+Verifier score per step:
+
+v
+i
+	​
+
+=p_wrong(i)
+
+Interpretation:
+
+v
+i
+	​
+
+≈0: step judged valid
+v
+i
+	​
+
+→1: step judged invalid
+Risk score (current baseline)
+
+Risk combines verifier + contradiction additively:
+
+r
+i
+	​
+
+=min(1, v
+i
+	​
+
++c
+i
+	​
+
+)
+
+This is a simple baseline:
+
+higher verifier risk OR higher contradiction risk increases overall risk
+clipped to [0,1]
+
+Future work:
+
+weighted combination (e.g., w
+v
+	​
+
+v
+i
+	​
+
++w
+c
+	​
+
+c
+i
+	​
+
+)
+learned combiner
+Earliest risky step
+
+Given configured threshold τ (risk_threshold):
+
+k=min{i∣r
+i
+	​
+
+>τ}
+
+If no step satisfies the condition, earliest_bad_step = null.
+
+Repair Details (Implemented: single-pass suffix regeneration)
+
+If earliest_bad_step = k:
+
+keep prefix: steps[:k]
+regenerate from Step (k+1) onward using the provider’s generation model
+constraints: don’t modify prefix, don’t introduce new assumptions, keep step format
+
+(Iterative re-scoring/repair loop is next.)
+
+Evaluation (Implemented)
+GSM8K answer normalization
+
+GSM8K answers vary in surface form (e.g., 18 vs $18 vs 18.0). Evaluation normalizes numeric answers:
+
+Normalization:
+
+strip commas and $
+extract the last numeric value from the string
+canonicalize to integer if possible (else normalized float string)
+
+Exact match is computed on normalized forms.
+
+Configuration (YAML)
+
+Key fields in configs/*.yaml:
+
+run_name: output run folder name
+dataset_path: input dataset JSONL
+output_dir: where run artifacts are stored
+
+model:
+
+provider: openai or gemini
+name: model name (e.g., gpt-5.4-mini)
+temperature: generation randomness (lower = more deterministic)
+max_output_tokens: output length cap
+
+scoring:
+
+risk_threshold: risk threshold τ
+improvement_threshold: stopping tolerance ϵ (for iterative loop, WIP)
+max_iters: max repair iterations (for iterative loop, WIP)
+Current Status
+
+Implemented:
+
+reproducible CLI harness (Typer)
+HF dataset export (GSM8K)
+OpenAI trace generation (gpt-5.4-mini)
+step splitting (excludes Final answer)
+contradiction scoring via RoBERTa-large-MNLI
+verifier scoring via LLM judge (batched JSON output)
+risk scoring + earliest bad step detection
+targeted suffix repair (single pass)
+GSM8K answer normalization in evaluation
+
+Next to implement:
+
+re-evaluation loop (re-score repaired trace and iterate until improvement plateaus)
+StrategyQA + evidence support scoring (retrieval/evidence alignment)
+ablation runner (grid of configs)
+
+Known limitations (current):
+
+NLI contradiction is not a math-correctness detector; it can be noisy on symbolic text.
+Verifier is an LLM-judge baseline (PRM training using PRM800K is planned).
+Iterative repair loop is WIP; current repair is single-pass.
+Quickstart (optional but useful)
+
+Typical run:
+
+prepare-dataset
+generate-traces
+score-traces
+repair-traces
+evaluate
+
+Artifacts are written to:
+data/runs/<run_name>/

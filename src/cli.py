@@ -9,6 +9,7 @@ from .manifest import make_manifest, write_manifest
 from .schemas import make_base_record
 
 from .providers.gemini_client import GeminiClient
+from .providers.openai_client import OpenAIClientWrapper
 
 from .scorers.nli import NLIScorer
 
@@ -90,12 +91,20 @@ def generate_traces(config: str = typer.Option(..., "--config", "-c")):
     cfg = load_config(config)
     outdir = run_dir(cfg.output_dir, cfg.run_name)
     outdir.mkdir(parents=True, exist_ok=True)
+
     model_cfg = cfg.raw.get("model", {})
-    gen_model = model_cfg.get("name", "gemini-2.0-flash")
+    provider = model_cfg.get("provider", "openai")
+    model_name = model_cfg.get("name", "gpt-5.4-mini")
+    #gen_model = model_cfg.get("name", "gemini-2.0-flash")
     temperature = float(model_cfg.get("temperature", 0.2))
     max_output_tokens = int(model_cfg.get("max_output_tokens", 800))
 
-    gem = GeminiClient(model=gen_model)
+    if provider == "openai":
+        gen_client = OpenAIClientWrapper(model=model_name)
+    elif provider == "gemini":
+        gen_client = GeminiClient(model=model_name)
+    else:
+        raise ValueError(f"Unknown provider: {provider}")
     
     manifest = make_manifest(cfg.run_name, "generate-traces", config, cfg.raw)
     write_manifest(outdir / "manifest.generate.json", manifest)
@@ -103,7 +112,7 @@ def generate_traces(config: str = typer.Option(..., "--config", "-c")):
     records = []
     for row in read_jsonl(cfg.dataset_path):
         q = row["question"]
-        trace, ans = gem.generate_trace(
+        trace, ans = gen_client.generate_trace(
             q,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
@@ -141,8 +150,14 @@ def score_traces(
     write_manifest(outdir / "manifest.score.json", manifest)
 
     model_cfg = cfg.raw.get("model", {})
-    judge_model = model_cfg.get("name", "gemini-2.5-flash")  # same model for now
-    gem_judge = GeminiClient(model=judge_model)
+    provider = model_cfg.get("provider", "openai")
+    judge_model = model_cfg.get("name", "gpt-5.4-mini")  # same model for now
+    if provider == "openai":
+        judge_client = OpenAIClientWrapper(model=judge_model)
+    elif provider == "gemini":
+        judge_client = GeminiClient(model=judge_model)
+    else:
+        raise ValueError(...)
 
     scored = []
     scoring_cfg = cfg.raw.get("scoring", {})
@@ -155,12 +170,10 @@ def score_traces(
         steps = [ln for ln in raw_lines if ln.lower().startswith("step ")]
 
         # Get verifier judgments in one call
-        judge_results = gem_judge.judge_steps(
-            question=rec["question"],
-            steps=steps,
-            temperature=0.0,
-            max_output_tokens=2000,
-        )
+        try:
+            judge_results = judge_client.judge_steps(question=rec["question"], steps=steps)
+        except Exception:
+            judge_results = []
 
         # Convert to per-step verifier list (p_wrong)
         verifier = [0.5] * len(steps)  # default fallback
@@ -211,73 +224,7 @@ def score_traces(
     write_jsonl(outdir / "scored.jsonl", scored)
     typer.echo(f"Wrote {len(scored)} records to {outdir/'scored.jsonl'}")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# STUB, DOES NOTHING EXCEPT RETURNS FAKE INFO
+# WIP
 @app.command("repair-traces")
 def repair_traces(
     config: str = typer.Option(..., "--config", "-c"),
@@ -291,29 +238,96 @@ def repair_traces(
     manifest = make_manifest(cfg.run_name, "repair-traces", config, cfg.raw)
     write_manifest(outdir / "manifest.repair.json", manifest)
 
+    # Build the generation client from config (OpenAI by default)
+    model_cfg = cfg.raw.get("model", {})
+    provider = model_cfg.get("provider", "openai")
+    model_name = model_cfg.get("name", "gpt-5.4-mini")
+    temperature = float(model_cfg.get("temperature", 0.2))
+    max_output_tokens = int(model_cfg.get("max_output_tokens", 800))
+
+    if provider == "openai":
+        gen_client = OpenAIClientWrapper(model=model_name)
+    elif provider == "gemini":
+        gen_client = GeminiClient(model=model_name)
+    else:
+        raise ValueError(f"Unknown provider: {provider}")
+
     repaired = []
     for rec in read_jsonl(inpath):
         k = rec.get("earliest_bad_step")
         rec2 = dict(rec)
+        steps = rec.get("steps", [])
 
-        if k is None:
-            rec2["repaired_trace"] = None
-            rec2["repaired_answer"] = None
-        else:
-            # STUB: pretend we repaired by replacing suffix with a placeholder
-            prefix = rec.get("steps", [])[:k]
-            suffix = ["[REPAIRED] Step regenerated with constraints.", "[REPAIRED] Final answer produced."]
-            rec2["repaired_trace"] = "\n".join(prefix + suffix)
-            rec2["repaired_answer"] = rec.get("model_answer")
+        # Default, no repair performed
+        rec2["repaired_trace"] = None
+        rec2["repaired_answer"] = None
 
-        rec2["logs"] = {
-            "iterations": 1,
-            "note": "stub repair; replace with suffix regeneration later",
-        }
+        # If no risky step found, keep as-is
+        if k is None or not steps:
+            rec2.setdefault("logs", {})
+            rec2["logs"]["repair"] = {"performed": False, "reason": "no_bad_step_or_no_steps"}
+            repaired.append(rec2)
+            continue
+
+        # Prefix: keep steps before first bad step
+        prefix = steps[:k]
+        next_step_number = k + 1  # Steps are human-numbered starting at 1
+
+        try:
+            suffix_text, repaired_answer = gen_client.repair_suffix(
+                question=rec["question"],
+                prefix_steps=prefix,
+                next_step_number=next_step_number,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+            )
+
+            # Assemble full repaired trace
+            suffix_lines = [ln.strip() for ln in suffix_text.splitlines() if ln.strip()]
+            rec2["repaired_trace"] = "\n".join(prefix + suffix_lines)
+            rec2["repaired_answer"] = repaired_answer
+
+            rec2.setdefault("logs", {})
+            rec2["logs"]["repair"] = {
+                "performed": True,
+                "k": k,
+                "next_step_number": next_step_number,
+            }
+
+        except Exception as e:
+            # Fail-soft: keep record, but mark repair failure
+            rec2.setdefault("logs", {})
+            rec2["logs"]["repair"] = {
+                "performed": False,
+                "k": k,
+                "error": str(e),
+            }
+
         repaired.append(rec2)
+        
+        
 
     write_jsonl(outdir / "repaired.jsonl", repaired)
     typer.echo(f"Wrote {len(repaired)} records to {outdir/'repaired.jsonl'}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # STUB, DOES NOTHING YET BUT RETURN FAKE INFO

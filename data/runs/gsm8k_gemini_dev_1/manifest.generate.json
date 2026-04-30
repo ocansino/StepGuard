@@ -4,11 +4,11 @@
   "config_path": "configs/gsm8k_gemini_dev.yaml",
   "config": {
     "run_name": "gsm8k_gemini_dev_1",
-    "dataset_path": "data/raw/gsm8k_test_1.jsonl",
+    "dataset_path": "data/raw/gsm8k_test_10.jsonl",
     "output_dir": "data/runs",
     "model": {
       "provider": "gemini",
-      "name": "gemini-2.5-flash",
+      "name": "gemini-2.5-flash-lite",
       "prompt_id": "cot_steps_v1",
       "temperature": 0.2,
       "max_output_tokens": 800
@@ -22,6 +22,6 @@
       "enabled": false
     }
   },
-  "started_at_utc": "2026-04-16T22:55:05.864279+00:00",
-  "git_commit": "c4bbf282a73d200ae0bf7140004d6e80612a6b28"
+  "started_at_utc": "2026-04-23T06:31:27.807013+00:00",
+  "git_commit": "0491984e4df7ddf7c383eb8ae8c6408ae39bc45e"
 }

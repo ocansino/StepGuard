@@ -1,20 +1,20 @@
 {
-  "run_name": "gsm8k_gemini_dev_1",
+  "run_name": "gsm8k_openai_dev_10",
   "command": "score-traces",
-  "config_path": "configs/gsm8k_gemini_dev.yaml",
+  "config_path": "configs/gsm8k_openai_dev.yaml",
   "config": {
-    "run_name": "gsm8k_gemini_dev_1",
+    "run_name": "gsm8k_openai_dev_10",
     "dataset_path": "data/raw/gsm8k_test_10.jsonl",
     "output_dir": "data/runs",
     "model": {
-      "provider": "gemini",
-      "name": "gemini-3.1-flash-lite-preview",
+      "provider": "openai",
+      "name": "gpt-5.4-mini",
       "prompt_id": "cot_steps_v1",
       "temperature": 0.2,
       "max_output_tokens": 800
     },
     "scoring": {
-      "risk_threshold": 0.8,
+      "risk_threshold": 0.1,
       "improvement_threshold": 0.02,
       "max_iters": 2
     },
@@ -22,6 +22,6 @@
       "enabled": false
     }
   },
-  "started_at_utc": "2026-04-23T22:18:47.086420+00:00",
+  "started_at_utc": "2026-04-29T07:52:44.375376+00:00",
   "git_commit": "0491984e4df7ddf7c383eb8ae8c6408ae39bc45e"
 }
