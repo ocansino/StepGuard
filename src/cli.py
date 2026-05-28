@@ -64,6 +64,85 @@ def gsm8k_exact_match(pred: Optional[str], gold: Optional[str]) -> bool:
     g = normalize_gsm8k_answer(gold)
     return (p is not None) and (g is not None) and (p == g)
 
+def split_steps(trace: str) -> List[str]:
+    raw_lines = [s.strip() for s in trace.splitlines() if s.strip()]
+    return [ln for ln in raw_lines if ln.lower().startswith("step ")]
+
+
+def summarize_risk(risks: List[float], tau: float) -> Dict[str, Any]:
+    if not risks:
+        return {
+            "avg_risk": 0.0,
+            "max_risk": 0.0,
+            "num_risky_steps": 0,
+        }
+
+    return {
+        "avg_risk": sum(risks) / len(risks),
+        "max_risk": max(risks),
+        "num_risky_steps": sum(1 for r in risks if r > tau),
+    }
+
+
+def score_record_trace(
+    *,
+    rec: Dict[str, Any],
+    trace: str,
+    nli: NLIScorer,
+    judge_client: Any,
+    tau: float,
+) -> Dict[str, Any]:
+    steps = split_steps(trace)
+
+    try:
+        judge_results = judge_client.judge_steps(
+            question=rec["question"],
+            steps=steps,
+        )
+    except Exception:
+        judge_results = []
+
+    verifier = [0.5] * len(steps)
+    for item in judge_results:
+        try:
+            idx = int(item.get("step_index"))
+            p_wrong = float(item.get("p_wrong"))
+            if 0 <= idx < len(steps):
+                verifier[idx] = max(0.0, min(1.0, p_wrong))
+        except Exception:
+            continue
+
+    contradiction = []
+    for i, step in enumerate(steps):
+        if i == 0:
+            contradiction.append(0.0)
+            continue
+
+        prev = steps[max(0, i - 2): i]
+        premise = "\n".join(prev)
+        p_contra = nli.contradiction_prob(
+            premise=premise,
+            hypothesis=step,
+        )
+        contradiction.append(p_contra)
+
+    risks = [min(1.0, v + c) for v, c in zip(verifier, contradiction)]
+    earliest = next((i for i, r in enumerate(risks) if r > tau), None)
+
+    risk_summary = summarize_risk(risks, tau)
+
+    return {
+        "steps": steps,
+        "scores": {
+            "verifier": verifier,
+            "contradiction": contradiction,
+            "evidence_support": None,
+        },
+        "risks": risks,
+        "earliest_bad_step": earliest,
+        "risk_summary": risk_summary,
+    }
+
 @app.command("prepare-dataset")
 def prepare_dataset(
     name: str = typer.Option(..., "--name", help="gsm8k or strategyqa"),
@@ -310,7 +389,173 @@ def repair_traces(
     write_jsonl(outdir / "repaired.jsonl", repaired)
     typer.echo(f"Wrote {len(repaired)} records to {outdir/'repaired.jsonl'}")
 
+@app.command("iterative-repair")
+def iterative_repair(
+    config: str = typer.Option(..., "--config", "-c"),
+    input_path: Optional[str] = typer.Option(None, "--input"),
+):
+    cfg = load_config(config)
+    outdir = run_dir(cfg.output_dir, cfg.run_name)
+    outdir.mkdir(parents=True, exist_ok=True)
 
+    inpath = Path(input_path) if input_path else (outdir / "generated.jsonl")
+
+    manifest = make_manifest(cfg.run_name, "iterative-repair", config, cfg.raw)
+    write_manifest(outdir / "manifest.iterative_repair.json", manifest)
+
+    model_cfg = cfg.raw.get("model", {})
+    provider = model_cfg.get("provider", "openai")
+    model_name = model_cfg.get("name", "gpt-5.4-mini")
+    temperature = float(model_cfg.get("temperature", 0.2))
+    max_output_tokens = int(model_cfg.get("max_output_tokens", 800))
+
+    scoring_cfg = cfg.raw.get("scoring", {})
+    tau = float(scoring_cfg.get("risk_threshold", scoring_cfg.get("tau", 0.8)))
+    improvement_threshold = float(scoring_cfg.get("improvement_threshold", 0.02))
+    max_iters = int(scoring_cfg.get("max_iters", 2))
+
+    if provider == "openai":
+        gen_client = OpenAIClientWrapper(model=model_name)
+        judge_client = OpenAIClientWrapper(model=model_name)
+    elif provider == "gemini":
+        gen_client = GeminiClient(model=model_name)
+        judge_client = GeminiClient(model=model_name)
+    else:
+        raise ValueError(f"Unknown provider: {provider}")
+
+    nli = NLIScorer(model_name="FacebookAI/roberta-large-mnli")
+
+    results = []
+
+    for rec in read_jsonl(inpath):
+        current_trace = rec["model_trace"]
+        current_answer = rec.get("model_answer")
+
+        iteration_logs = []
+
+        current_score = score_record_trace(
+            rec=rec,
+            trace=current_trace,
+            nli=nli,
+            judge_client=judge_client,
+            tau=tau,
+        )
+
+        iteration_logs.append({
+            "iter": 0,
+            "kind": "original",
+            "answer": current_answer,
+            "earliest_bad_step": current_score["earliest_bad_step"],
+            **current_score["risk_summary"],
+        })
+
+        final_score = current_score
+        stop_reason = None
+
+        for iter_idx in range(1, max_iters + 1):
+            k = final_score["earliest_bad_step"]
+            steps = final_score["steps"]
+
+            if k is None:
+                stop_reason = "no_bad_step"
+                break
+
+            if not steps:
+                stop_reason = "no_steps"
+                break
+
+            prefix = steps[:k]
+            next_step_number = k + 1
+
+            try:
+                suffix_text, candidate_answer = gen_client.repair_suffix(
+                    question=rec["question"],
+                    prefix_steps=prefix,
+                    next_step_number=next_step_number,
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                )
+            except Exception as e:
+                iteration_logs.append({
+                    "iter": iter_idx,
+                    "kind": "repair_error",
+                    "error": str(e),
+                    "accepted": False,
+                })
+                stop_reason = "repair_error"
+                break
+
+            suffix_lines = [ln.strip() for ln in suffix_text.splitlines() if ln.strip()]
+            candidate_trace = "\n".join(prefix + suffix_lines)
+
+            candidate_score = score_record_trace(
+                rec=rec,
+                trace=candidate_trace,
+                nli=nli,
+                judge_client=judge_client,
+                tau=tau,
+            )
+
+            old_avg_risk = final_score["risk_summary"]["avg_risk"]
+            new_avg_risk = candidate_score["risk_summary"]["avg_risk"]
+            improvement = old_avg_risk - new_avg_risk
+
+            accepted = improvement >= 0.0
+
+            iteration_logs.append({
+                "iter": iter_idx,
+                "kind": "repair",
+                "k": k,
+                "next_step_number": next_step_number,
+                "answer": candidate_answer,
+                "old_avg_risk": old_avg_risk,
+                "new_avg_risk": new_avg_risk,
+                "improvement": improvement,
+                "accepted": accepted,
+                "continue": improvement >= improvement_threshold,
+                "earliest_bad_step": candidate_score["earliest_bad_step"],
+                **candidate_score["risk_summary"],
+            })
+
+            if not accepted:
+                stop_reason = "risk_worsened"
+                break
+
+            current_trace = candidate_trace
+            current_answer = candidate_answer
+            final_score = candidate_score
+
+            if improvement < improvement_threshold:
+                stop_reason = "improvement_below_threshold"
+                break
+
+        if stop_reason is None:
+            stop_reason = "max_iters"
+
+        rec2 = dict(rec)
+        rec2.update({
+            "final_trace": current_trace,
+            "final_answer": current_answer,
+            "final_steps": final_score["steps"],
+            "final_scores": final_score["scores"],
+            "final_risks": final_score["risks"],
+            "final_earliest_bad_step": final_score["earliest_bad_step"],
+            "logs": {
+                **rec.get("logs", {}),
+                "iterative_repair": {
+                    "max_iters": max_iters,
+                    "improvement_threshold": improvement_threshold,
+                    "risk_threshold": tau,
+                    "stop_reason": stop_reason,
+                    "iterations": iteration_logs,
+                },
+            },
+        })
+
+        results.append(rec2)
+
+    write_jsonl(outdir / "iterative_repaired.jsonl", results)
+    typer.echo(f"Wrote {len(results)} records to {outdir/'iterative_repaired.jsonl'}")
 
 
 
