@@ -3,6 +3,7 @@ from typing import Optional, List, Dict, Tuple, Any
 from .datasets_prep import prepare_gsm8k, prepare_strategyqa
 import typer
 import re
+import json
 from .config import load_config
 from .io_utils import read_jsonl, write_jsonl
 from .manifest import make_manifest, write_manifest
@@ -58,12 +59,6 @@ def normalize_gsm8k_answer(text: Optional[str]) -> Optional[str]:
     out = f"{val:.10f}".rstrip("0").rstrip(".")
     return out
 
-
-def gsm8k_exact_match(pred: Optional[str], gold: Optional[str]) -> bool:
-    p = normalize_gsm8k_answer(pred)
-    g = normalize_gsm8k_answer(gold)
-    return (p is not None) and (g is not None) and (p == g)
-
 def split_steps(trace: str) -> List[str]:
     raw_lines = [s.strip() for s in trace.splitlines() if s.strip()]
     return [ln for ln in raw_lines if ln.lower().startswith("step ")]
@@ -82,6 +77,49 @@ def summarize_risk(risks: List[float], tau: float) -> Dict[str, Any]:
         "max_risk": max(risks),
         "num_risky_steps": sum(1 for r in risks if r > tau),
     }
+
+
+def gsm8k_exact_match(pred: Optional[str], gold: Optional[str]) -> bool:
+    p = normalize_gsm8k_answer(pred)
+    g = normalize_gsm8k_answer(gold)
+    return (p is not None) and (g is not None) and (p == g)
+
+def answer_is_correct(task: Optional[str], pred: Optional[str], gold: Optional[str]) -> bool:
+    if gold is None or pred is None:
+        return False
+
+    if task == "math":
+        return gsm8k_exact_match(pred, gold)
+
+    return str(pred).strip().lower() == str(gold).strip().lower()
+
+def mean_or_zero(values: List[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+def get_original_risk_summary(rec: Dict[str, Any], tau: float) -> Dict[str, Any]:
+    iterative_log = rec.get("logs", {}).get("iterative_repair", {})
+    iterations = iterative_log.get("iterations", [])
+
+    if iterations:
+        first = iterations[0]
+        return {
+            "avg_risk": float(first.get("avg_risk", 0.0)),
+            "max_risk": float(first.get("max_risk", 0.0)),
+            "num_risky_steps": int(first.get("num_risky_steps", 0)),
+        }
+
+    risks = rec.get("risks", [])
+    return summarize_risk(risks, tau)
+
+def get_final_risk_summary(rec: Dict[str, Any], tau: float) -> Dict[str, Any]:
+    final_risks = rec.get("final_risks")
+
+    if final_risks is not None:
+        return summarize_risk(final_risks, tau)
+
+    risks = rec.get("risks", [])
+    return summarize_risk(risks, tau)
+
 
 
 def score_record_trace(
@@ -303,7 +341,7 @@ def score_traces(
     write_jsonl(outdir / "scored.jsonl", scored)
     typer.echo(f"Wrote {len(scored)} records to {outdir/'scored.jsonl'}")
 
-# WIP
+
 @app.command("repair-traces")
 def repair_traces(
     config: str = typer.Option(..., "--config", "-c"),
@@ -557,25 +595,6 @@ def iterative_repair(
     write_jsonl(outdir / "iterative_repaired.jsonl", results)
     typer.echo(f"Wrote {len(results)} records to {outdir/'iterative_repaired.jsonl'}")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# STUB, DOES NOTHING YET BUT RETURN FAKE INFO
 @app.command("evaluate")
 def evaluate(
     config: str = typer.Option(..., "--config", "-c"),
@@ -584,41 +603,206 @@ def evaluate(
     cfg = load_config(config)
     outdir = run_dir(cfg.output_dir, cfg.run_name)
     outdir.mkdir(parents=True, exist_ok=True)
-    inpath = Path(input_path) if input_path else (outdir / "repaired.jsonl")
+
+    if input_path:
+        inpath = Path(input_path)
+    elif (outdir / "iterative_repaired.jsonl").exists():
+        inpath = outdir / "iterative_repaired.jsonl"
+    else:
+        inpath = outdir / "repaired.jsonl"
 
     manifest = make_manifest(cfg.run_name, "evaluate", config, cfg.raw)
     write_manifest(outdir / "manifest.evaluate.json", manifest)
 
+    scoring_cfg = cfg.raw.get("scoring", {})
+    tau = float(scoring_cfg.get("risk_threshold", scoring_cfg.get("tau", 0.8)))
+
     total = 0
-    correct = 0
+    answer_evaluated = 0
+
+    original_correct_count = 0
+    final_correct_count = 0
+
+    outcome_counts = {
+        "wrong_to_correct": 0,
+        "wrong_to_wrong": 0,
+        "correct_to_correct": 0,
+        "correct_to_wrong": 0,
+        "missing_gold_or_answer": 0,
+    }
+
+    stop_reason_counts: Dict[str, int] = {}
+    total_iteration_logs = 0
+    records_with_repair_attempt = 0
+    records_with_accepted_repair = 0
+    total_repair_attempts = 0
+    total_accepted_repair_iterations = 0
+
+    original_avg_risks = []
+    final_avg_risks = []
+    risk_deltas = []
+
+    original_max_risks = []
+    final_max_risks = []
+
+    original_risky_steps = []
+    final_risky_steps = []
+
+    per_record = []
+
     for rec in read_jsonl(inpath):
         total += 1
-        gold = rec.get("gold_answer")
-        pred = rec.get("repaired_answer") or rec.get("model_answer")
+
         task = rec.get("task")
+        gold = rec.get("gold_answer")
 
-        if gold is None or pred is None:
-            continue
+        original_answer = rec.get("model_answer")
+        final_answer = (
+            rec.get("final_answer")
+            or rec.get("repaired_answer")
+            or rec.get("model_answer")
+        )
 
-        if task == "math":
-            if gsm8k_exact_match(pred, gold):
-                correct += 1
+        has_answer_eval = gold is not None and original_answer is not None and final_answer is not None
+
+        if has_answer_eval:
+            answer_evaluated += 1
+            original_correct = answer_is_correct(task, original_answer, gold)
+            final_correct = answer_is_correct(task, final_answer, gold)
+
+            if original_correct:
+                original_correct_count += 1
+            if final_correct:
+                final_correct_count += 1
+
+            if not original_correct and final_correct:
+                outcome = "wrong_to_correct"
+            elif not original_correct and not final_correct:
+                outcome = "wrong_to_wrong"
+            elif original_correct and final_correct:
+                outcome = "correct_to_correct"
+            else:
+                outcome = "correct_to_wrong"
+
+            outcome_counts[outcome] += 1
         else:
-            # keep old string match for now (we'll improve non-math later)
-            if str(pred).strip().lower() == str(gold).strip().lower():
-                correct += 1
+            original_correct = False
+            final_correct = False
+            outcome = "missing_gold_or_answer"
+            outcome_counts[outcome] += 1
 
-    metrics = {"total": total, "exact_match": (correct / total if total else 0.0)}
-    (outdir / "metrics.json").write_text(__import__("json").dumps(metrics, indent=2), encoding="utf-8")
-    typer.echo(f"Metrics: {metrics} (saved to {outdir/'metrics.json'})")
+        original_risk = get_original_risk_summary(rec, tau)
+        final_risk = get_final_risk_summary(rec, tau)
 
+        risk_delta = original_risk["avg_risk"] - final_risk["avg_risk"]
 
+        original_avg_risks.append(original_risk["avg_risk"])
+        final_avg_risks.append(final_risk["avg_risk"])
+        risk_deltas.append(risk_delta)
+
+        original_max_risks.append(original_risk["max_risk"])
+        final_max_risks.append(final_risk["max_risk"])
+
+        original_risky_steps.append(original_risk["num_risky_steps"])
+        final_risky_steps.append(final_risk["num_risky_steps"])
+
+        iterative_log = rec.get("logs", {}).get("iterative_repair", {})
+        iterations = iterative_log.get("iterations", [])
+        stop_reason = iterative_log.get("stop_reason", "not_iterative")
+
+        stop_reason_counts[stop_reason] = stop_reason_counts.get(stop_reason, 0) + 1
+        total_iteration_logs += len(iterations)
+
+        repair_iterations = [it for it in iterations if it.get("kind") == "repair"]
+        accepted_iterations = [it for it in repair_iterations if it.get("accepted") is True]
+
+        total_repair_attempts += len(repair_iterations)
+        total_accepted_repair_iterations += len(accepted_iterations)
+
+        if repair_iterations:
+            records_with_repair_attempt += 1
+        if accepted_iterations:
+            records_with_accepted_repair += 1
+
+        per_record.append({
+            "id": rec.get("id"),
+            "task": task,
+            "gold_answer": gold,
+            "original_answer": original_answer,
+            "final_answer": final_answer,
+            "original_correct": original_correct,
+            "final_correct": final_correct,
+            "answer_outcome": outcome,
+            "original_avg_risk": original_risk["avg_risk"],
+            "final_avg_risk": final_risk["avg_risk"],
+            "risk_delta": risk_delta,
+            "original_max_risk": original_risk["max_risk"],
+            "final_max_risk": final_risk["max_risk"],
+            "original_num_risky_steps": original_risk["num_risky_steps"],
+            "final_num_risky_steps": final_risk["num_risky_steps"],
+            "stop_reason": stop_reason,
+            "num_iteration_logs": len(iterations),
+            "num_repair_attempts": len(repair_iterations),
+            "num_accepted_repair_iterations": len(accepted_iterations),
+        })
+
+    original_accuracy = original_correct_count / answer_evaluated if answer_evaluated else 0.0
+    final_accuracy = final_correct_count / answer_evaluated if answer_evaluated else 0.0
+
+    metrics = {
+        "input_path": str(inpath),
+        "total_records": total,
+        "answer_evaluated_records": answer_evaluated,
+        "correctness": {
+            "original_correct": original_correct_count,
+            "final_correct": final_correct_count,
+            "original_accuracy": original_accuracy,
+            "final_accuracy": final_accuracy,
+            "accuracy_delta": final_accuracy - original_accuracy,
+            "outcomes": outcome_counts,
+        },
+        "risk": {
+            "mean_original_avg_risk": mean_or_zero(original_avg_risks),
+            "mean_final_avg_risk": mean_or_zero(final_avg_risks),
+            "mean_risk_delta": mean_or_zero(risk_deltas),
+            "mean_original_max_risk": mean_or_zero(original_max_risks),
+            "mean_final_max_risk": mean_or_zero(final_max_risks),
+            "mean_original_num_risky_steps": mean_or_zero(original_risky_steps),
+            "mean_final_num_risky_steps": mean_or_zero(final_risky_steps),
+        },
+        "repair_loop": {
+            "stop_reasons": stop_reason_counts,
+            "records_with_repair_attempt": records_with_repair_attempt,
+            "records_with_accepted_repair": records_with_accepted_repair,
+            "total_repair_attempts": total_repair_attempts,
+            "total_accepted_repair_iterations": total_accepted_repair_iterations,
+            "repair_attempt_rate": records_with_repair_attempt / total if total else 0.0,
+            "accepted_repair_record_rate": records_with_accepted_repair / total if total else 0.0,
+            "accepted_repair_iteration_rate": (
+                total_accepted_repair_iterations / total_repair_attempts
+                if total_repair_attempts
+                else 0.0
+            ),
+            "mean_iteration_logs_per_record": total_iteration_logs / total if total else 0.0,
+        },
+    }
+
+    (outdir / "metrics.json").write_text(
+        json.dumps(metrics, indent=2),
+        encoding="utf-8",
+    )
+    write_jsonl(outdir / "evaluation_records.jsonl", per_record)
+
+    typer.echo(f"Metrics saved to {outdir/'metrics.json'}")
+    typer.echo(f"Per-record evaluation saved to {outdir/'evaluation_records.jsonl'}")
+
+#wip
 @app.command("run-pipeline")
 def run_pipeline(config: str = typer.Option(..., "--config", "-c")):
-    # Phase 0: just execute the stages in order
+    #generate -> iterative repair -> evaluate
+
     generate_traces(config=config)
-    score_traces(config=config, input_path=None)
-    repair_traces(config=config, input_path=None)
+    iterative_repair(config=config, input_path=None)
     evaluate(config=config, input_path=None)
 
 

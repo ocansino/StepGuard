@@ -1,42 +1,40 @@
 StepGuard: Iterative Process Monitoring and Targeted Suffix Repair for Improving LLM Reasoning
 
-
 Stepguard is a research pipeline for improving LLM Reasoning through the monitoring of step-by-step reasoning traces to identify the earliest risky step (first reasoning step whose risk score crosses the risk threshold) and applying targeted suffix repair. 
-
 
 Proposal:
 LLMs often produce reasoning steps that look reasonable but contain:
-* unsupported assumptions
-* invalid logical jumps
-* contradictions
-* logical gaps
+unsupported assumptions
+invalid logical jumps
+contradictions
+logical gaps
 Rather than evaluating only the final answer, StepGuard takes things a step further by evaluating the reasoning process step-by-step.
 Core pipeline:
-1. Generate reasoning trace + final answer 
-2. Split trace into reasoning steps
-3. Score each step (verifier + contradiction; evidence support later)
-4. Compute per-step risk and find earliest risky step
-5. Repair by regenerating the suffix from the earliest risky step
-6. Rescore the repaired trace
-7. Iterate repairs until improvement plateaus, risk worsens, or max_iters reached
-8. Evaluate correctness and risk reduction
+Generate reasoning trace + final answer 
+Split trace into reasoning steps
+Score each step (verifier + contradiction; evidence support later)
+Compute per-step risk and find earliest risky step
+Repair by regenerating the suffix from the earliest risky step
+Rescore the repaired trace
+Iterate repairs until improvement plateaus, risk worsens, or max_iters reached
+Evaluate final answer correctness and process risk reduction
 Project Structure:
-* src/
-   * cli.py - Typer CLI that handles commands
-   * config.py - Loads YAML files
-   * io_utils.py - JSON reader/writers
-   * datasets_prep.py - Huggingface dataset exporter
-   * scorers/
-      * nli.py - Roberta contradiction judge
-   * providers/
-      * Gemini_client.py - Gemini generator/judge
-      * Openai_client.py - Chatgpt generator/judge
-* configs/
-   * Gsm8k_gemini_dev.yaml - config file for gemini runs
-   * Gsm8k_openai_dev.yaml - config file for openai runs
-* data/
-   * raw/ - datasets exported in JSON
-   * runs/ - output folders containing generated/scored/repaired traces
+src/
+cli.py - Typer CLI that handles commands
+config.py - Loads YAML files
+io_utils.py - JSON reader/writers
+datasets_prep.py - Huggingface dataset exporter
+scorers/
+nli.py - Roberta contradiction judge
+providers/
+Gemini_client.py - Gemini generator/judge
+Openai_client.py - Chatgpt generator/judge
+configs/
+Gsm8k_gemini_dev.yaml - config file for gemini runs
+Gsm8k_openai_dev.yaml - config file for openai runs
+data/
+raw/ - datasets exported in JSON
+runs/ - output folders containing generated/scored/repaired traces
 Data Format (JSON):
 Original trace schema:
 {
@@ -52,9 +50,7 @@ Original trace schema:
  "model_answer": "..." //final answer given by trace
 }
 
-
 Scored schema:
-
 
 {
  "steps": ["Step 1: ...", "Step 2: ...", ...], //all steps but answer"
@@ -66,7 +62,6 @@ Scored schema:
  "risks": [0.1, 0.3, ...], // combined per-step risk
  "earliest_bad_step": null | 0 | 1 | … // first step that exceeds risk threshold
 }
-
 
 Repaired schema:
 {
@@ -80,7 +75,6 @@ Repaired schema:
 }
 }
 }
-
 
 Iterative repair schema
 {
@@ -102,54 +96,44 @@ Iterative repair schema
 }
 
 
-
-
 CLI Commands:
-
 
 Prepare-dataset:
 Exports dataset into JSON format for pipeline use
 
-
 Generate-traces:
 Reads JSON dataset, and generates reasoning trace + answer for every question using chosen provider, returns output in generated.jsonl
-
 
 Score-traces:
 Reads generated.jsonl and calculates verifier and contradiction scores for each step in the trace. It then uses a combination of these scores to assign a risk value. If step risk value is above threshold, it is designated a bad step. The first of these bad steps is the chosen step for earliest bad step for suffix generation, returns scored.jsonl
 
-
 Repair-traces:
-Reads scored.jsonl and finds first bad step, it then keeps all the steps before it and regenerates all steps after including itself, outputs repaired.jsonl
+Reads scored.jsonl and finds first bad step, it then keeps all the steps before it and regenerates all steps after including itself, outputs repaired.jsonl. Repairs only once.
 
+Iterative-repair:
+Reads generated.jsonl and runs a full repair loop. Runs score-traces to find the earliest risky step, then runs Repair-traces to repair traces. Compares old risk to new risk, and accepts repair if risk does not worsen. Repeats if improvement meets improvement_threshold while max_iters has not been reached, outputs iterative_repaired.jsonl.
 
-evaluate:
-WIP, computes metrics.
-
+Evaluate:
+Reads iterative_repaired.jsonl and computes correctness, risk, and repair metrics, outputs metrics.json and evaluation_records.jsonl
 
 Run-pipeline:
 Runs stages in order:
-generate → score → repair → evaluate
-
+generate → iterative repair → evaluate
 
 Scoring:
 
-
 Contradiction score:
-* For each step i, up to 2 previous steps are defined as premise.
-* RoBERTa-NLI then returns probabilities for contradiction.
-* Scoring range: 0 -> no contradiction detected, 1 -> strong contradiction detected 
-
+For each step i, up to 2 previous steps are defined as premise.
+RoBERTa-NLI then returns probabilities for contradiction.
+Scoring range: 0 -> no contradiction detected, 1 -> strong contradiction detected 
 
 Verifier score:
-* For each trace, call the judge once with the question and the list of steps.
-* Scoring range: 0 ->step judged valid, 1 -> step judged invalid
-
+For each trace, call the judge once with the question and the list of steps.
+Scoring range: 0 ->step judged valid, 1 -> step judged invalid
 
 Risk Score:
-* Combine contradiction and verifier scores, clipped to between 0 and 1.
-* Experiments will modify this.
-
+Combine contradiction and verifier scores, clipped to between 0 and 1.
+Experiments will modify this.
 
 Pipeline logic:
 -Contradiction Scoring:
@@ -160,134 +144,137 @@ For each step i in steps:
         premise = previous 1-2 steps
         hypothesis = current step
 
-
         contradiction_score = P(contradiction | premise, hypothesis)
         using RoBERTa-MNLI
 
-
     store contradiction_score for step i
-
 
 -Verifier Scoring:
 Given question and steps:
     Send question + full step list to LLM judge
-
 
     Judge returns:
         step_index
         verdict
         p_wrong
 
-
     For each step i:
         verifier_score[i] = p_wrong[i]
 
-
     If judge fails:
         verifier_score[i] = 0.5
-
 
 -Risk Scoring:
 For each step i:
     verifier = verifier_score[i]
     contradiction = contradiction_score[i]
 
-
     risk[i] = min(1.0, verifier + contradiction)
-
 
     If risk[i] > risk_threshold:
         mark step as risky
 
-
 -Earliest Risky Step Detection:
 earliest_bad_step = null
-
 
 For each step i in order:
     If risk[i] > risk_threshold:
         earliest_bad_step = i
         stop searching
 
-
 If no step crosses threshold:
     earliest_bad_step remains null
-
 
 -Iterative Repair Loop:
 current_trace = original model_trace
 current_answer = original model_answer
 
-
 Score current_trace
 Record original risk summary
-
 
 For iter from 1 to max_iters:
     If there is no earliest risky step:
         stop with reason "no_bad_step"
 
-
     k = earliest risky step
     prefix = steps before k
-
 
     Generate candidate suffix from step k + 1
     candidate_trace = prefix + candidate suffix
 
-
     Score candidate_trace
-
 
     old_trace_score = average risk across current steps
     new_trace_score = average risk across candidate steps
 
-
     improvement = old_trace_score - new_trace_score
-
 
     If improvement < 0:
         reject candidate trace
         stop with reason "risk_worsened"
 
-
     If 0 <= improvement < improvement_threshold:
         accept candidate trace
         stop with reason "improvement_below_threshold"
-
 
     If improvement >= improvement_threshold:
         accept candidate trace
         continue to next iteration
 
-
 If max_iters is reached:
     stop with reason "max_iters"
 
-
 Write final_trace, final_answer, final scores, final risks, and iteration logs
 
+-Evaluation:
+For each record in final output:
+    original_answer = model_answer
+    final_answer = final_answer or repaired_answer or model_answer
+    gold_answer = gold_answer
+
+    Compare original_answer to gold_answer
+    Compare final_answer to gold_answer
+
+    Categorize answer outcome:
+        wrong_to_correct
+        wrong_to_wrong
+        correct_to_correct
+        correct_to_wrong
+
+    Read original risk summary from iteration 0
+    Read final risk summary from final_risks
+
+    risk_delta = original_avg_risk - final_avg_risk
+
+    Count repair-loop behavior:
+        stop_reason
+        number of repair attempts
+        number of accepted repairs
+
+Aggregate all records into metrics.json
+Write per-example details to evaluation_records.jsonl
 
 
 
 Planned + Future Work:
-* Some kind of metrics/evaluation dashboard
-* StrategyQA + evidence support scoring (retrieval/evidence alignment)
-* PRM model to test against Verifier LLM-judge
-* Track token usage in repair loop to track how compute use scales with repair percentage
-* Stretch- Try on harder datasets like Frontier Math(epochAI) and GPQA Diamond(PHD science)
+Some kind of metrics/evaluation dashboard
+StrategyQA + evidence support scoring (retrieval/evidence alignment)
+PRM model to test against Verifier LLM-judge
+Track token usage in repair loop to track how compute use scales with repair percentage
+Stretch- Try on harder datasets like Frontier Math(epochAI) and GPQA Diamond(PHD science)
 Experiments:
-* LLM as Judge vs PRM model for Verifier score
-* Different formulas for risk
-* Different risk thresholds
-* Different number of iterations for repair allowed
-
+LLM as Judge vs PRM model for Verifier score
+Different formulas for risk
+Different risk thresholds
+Different number of iterations for repair allowed
 
 Datasets:
-* GSM8k- Math word problems, huggingface
-* StrategyQA- Evidence support problems, huggingface
-* PRM800K- PRM training dataset, paper
+GSM8k- Math word problems, huggingface
+StrategyQA- Evidence support problems, huggingface
+PRM800K- PRM training dataset, paper
+
+Citations:
 
 
-CItations:
-*
+
+
