@@ -1,5 +1,5 @@
-run_name: "gsm8k_openai_dev_10"
-dataset_path: "data/raw/gsm8k_test_10.jsonl"
+run_name: "gsm8k_openai_dev_50_2"
+dataset_path: "data/raw/gsm8k_test_50.jsonl"
 output_dir: "data/runs"
 
 model:
