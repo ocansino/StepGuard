@@ -164,7 +164,8 @@ def score_record_trace(
         )
         contradiction.append(p_contra)
 
-    risks = [min(1.0, v + c) for v, c in zip(verifier, contradiction)]
+    #risks = [min(1.0, v + c) for v, c in zip(verifier, contradiction)]
+    risks = [min(1.0, 0.75 * v + 0.25 * c) for v, c in zip(verifier, contradiction)] #verifier heavy
     earliest = next((i for i, r in enumerate(risks) if r > tau), None)
 
     risk_summary = summarize_risk(risks, tau)
@@ -320,7 +321,8 @@ def score_traces(
         evidence_support = None  # enabled later for non-math
 
         # Risk + earliest bad step
-        risks = [min(1.0, v + c) for v, c in zip(verifier, contradiction)]
+        #risks = [min(1.0, v + c) for v, c in zip(verifier, contradiction)]
+        risks = [min(1.0, 0.75 * v + 0.25 * c) for v, c in zip(verifier, contradiction)] #verifier heavy
         earliest = next((i for i, r in enumerate(risks) if r > tau), None)
 
         rec2 = dict(rec)
