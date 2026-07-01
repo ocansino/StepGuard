@@ -159,3 +159,65 @@ Rules:
         text = (resp.output_text or "").strip()
         answer = extract_final_answer(text)
         return text, answer
+    def judge_repair_candidate(
+        self,
+        *,
+        question: str,
+        original_trace: str,
+        original_answer: str,
+        repaired_trace: str,
+        repaired_answer: str,
+        max_output_tokens: int = 800,
+    ) -> Dict[str, Any]:
+        prompt = f"""You are a strict repair acceptance judge.
+
+You will compare an ORIGINAL solution and a REPAIRED solution for the same math problem.
+
+Your job is to decide whether the repaired solution is more likely to be correct and should replace the original.
+
+Return JSON ONLY in this schema:
+{{
+  "prefer_repaired": true,
+  "original_answer_support": 0.0,
+  "repaired_answer_support": 0.0,
+  "regression_risk": 0.0,
+  "confidence": 0.0,
+  "reason": "short explanation"
+}}
+
+Definitions:
+- original_answer_support: probability from 0 to 1 that the original answer is supported by the reasoning.
+- repaired_answer_support: probability from 0 to 1 that the repaired answer is supported by the reasoning.
+- regression_risk: probability from 0 to 1 that the repair made the answer worse.
+- prefer_repaired: true only if the repaired solution is more likely correct than the original.
+
+QUESTION:
+{question.strip()}
+
+ORIGINAL TRACE:
+{original_trace.strip()}
+
+ORIGINAL ANSWER:
+{original_answer}
+
+REPAIRED TRACE:
+{repaired_trace.strip()}
+
+REPAIRED ANSWER:
+{repaired_answer}
+"""
+
+        resp = self._client.responses.create(
+            model=self.model,
+            input=prompt,
+            temperature=0.0,
+            max_output_tokens=max_output_tokens,
+        )
+
+        text = (resp.output_text or "").strip()
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            text = text[start:end + 1]
+
+        return json.loads(text)

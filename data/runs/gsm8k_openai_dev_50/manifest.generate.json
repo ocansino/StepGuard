@@ -1,10 +1,10 @@
 {
-  "run_name": "gsm8k_openai_dev_50",
+  "run_name": "gsm8k_openai_dev_50_2",
   "command": "generate-traces",
   "config_path": "configs/gsm8k_openai_dev.yaml",
   "config": {
-    "run_name": "gsm8k_openai_dev_50",
-    "dataset_path": "data/raw/gsm8k_test_50_2.jsonl",
+    "run_name": "gsm8k_openai_dev_50_2",
+    "dataset_path": "data/raw/gsm8k_test_50.jsonl",
     "output_dir": "data/runs",
     "model": {
       "provider": "openai",
@@ -22,6 +22,6 @@
       "enabled": false
     }
   },
-  "started_at_utc": "2026-06-22T01:15:04.678091+00:00",
+  "started_at_utc": "2026-06-22T01:20:57.731303+00:00",
   "git_commit": "8a956e458305f7b87893e75d8086bfe740a9076f"
 }

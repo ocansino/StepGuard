@@ -1,44 +1,62 @@
 {
   "input_path": "data\\runs\\gsm8k_openai_dev_50\\iterative_repaired.jsonl",
-  "total_records": 50,
-  "answer_evaluated_records": 50,
+  "total_records": 100,
+  "answer_evaluated_records": 100,
   "correctness": {
-    "original_correct": 48,
-    "final_correct": 48,
-    "original_accuracy": 0.96,
-    "final_accuracy": 0.96,
-    "accuracy_delta": 0.0,
+    "original_correct": 99,
+    "final_correct": 97,
+    "original_accuracy": 0.99,
+    "final_accuracy": 0.97,
+    "accuracy_delta": -0.020000000000000018,
     "outcomes": {
       "wrong_to_correct": 0,
-      "wrong_to_wrong": 2,
-      "correct_to_correct": 48,
-      "correct_to_wrong": 0,
+      "wrong_to_wrong": 1,
+      "correct_to_correct": 97,
+      "correct_to_wrong": 2,
       "missing_gold_or_answer": 0
     }
   },
   "risk": {
-    "mean_original_avg_risk": 0.21591157341065328,
-    "mean_final_avg_risk": 0.1977842457481864,
-    "mean_risk_delta": 0.018127327662466892,
-    "mean_original_max_risk": 0.4949715065658093,
-    "mean_final_max_risk": 0.454771749818325,
-    "mean_original_num_risky_steps": 2.48,
-    "mean_final_num_risky_steps": 2.42
+    "mean_original_avg_risk": 0.20950321871072275,
+    "mean_final_avg_risk": 0.18970956644952253,
+    "mean_risk_delta": 0.019793652261200226,
+    "mean_original_max_risk": 0.46855604281574487,
+    "mean_final_max_risk": 0.4210224707886577,
+    "mean_original_num_risky_steps": 2.41,
+    "mean_final_num_risky_steps": 1.58
   },
   "repair_loop": {
     "stop_reasons": {
-      "improvement_below_threshold": 13,
-      "no_bad_step": 3,
-      "risk_worsened": 33,
-      "max_iters": 1
+      "improvement_below_threshold": 31,
+      "no_bad_step": 6,
+      "risk_worsened": 60,
+      "max_iters": 3
     },
-    "records_with_repair_attempt": 47,
-    "records_with_accepted_repair": 20,
-    "total_repair_attempts": 58,
-    "total_accepted_repair_iterations": 25,
-    "repair_attempt_rate": 0.94,
-    "accepted_repair_record_rate": 0.4,
-    "accepted_repair_iteration_rate": 0.43103448275862066,
-    "mean_iteration_logs_per_record": 2.16
+    "records_with_repair_attempt": 96,
+    "records_with_accepted_repair": 46,
+    "total_repair_attempts": 120,
+    "total_accepted_repair_iterations": 60,
+    "repair_attempt_rate": 0.96,
+    "accepted_repair_record_rate": 0.46,
+    "accepted_repair_iteration_rate": 0.5,
+    "mean_iteration_logs_per_record": 2.2
+  },
+  "repair_detection": {
+    "attempted_repair": {
+      "tp": 1,
+      "fp": 95,
+      "fn": 0,
+      "precision": 0.010416666666666666,
+      "recall": 1.0,
+      "f1": 0.020618556701030924
+    },
+    "accepted_repair": {
+      "tp": 0,
+      "fp": 46,
+      "fn": 1,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    }
   }
 }

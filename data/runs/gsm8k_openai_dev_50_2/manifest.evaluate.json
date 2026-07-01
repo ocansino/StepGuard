@@ -14,7 +14,7 @@
       "max_output_tokens": 800
     },
     "scoring": {
-      "risk_threshold": 0.1,
+      "risk_threshold": 0.2,
       "improvement_threshold": 0.02,
       "max_iters": 2
     },
@@ -22,6 +22,6 @@
       "enabled": false
     }
   },
-  "started_at_utc": "2026-06-22T02:04:49.345957+00:00",
-  "git_commit": "8a956e458305f7b87893e75d8086bfe740a9076f"
+  "started_at_utc": "2026-06-29T07:11:10.771068+00:00",
+  "git_commit": "29f5047b535d5b02b4dc342b303a421f59291b42"
 }

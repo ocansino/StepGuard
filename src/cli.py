@@ -96,6 +96,21 @@ def answer_is_correct(task: Optional[str], pred: Optional[str], gold: Optional[s
 def mean_or_zero(values: List[float]) -> float:
     return sum(values) / len(values) if values else 0.0
 
+def classification_metrics(tp: int, fp: int, fn: int) -> Dict[str, float]:
+    precision = tp / (tp + fp) if (tp + fp) else 0.0
+    recall = tp / (tp + fn) if (tp + fn) else 0.0
+    f1 = (
+        2 * precision * recall / (precision + recall)
+        if (precision + recall)
+        else 0.0
+    )
+
+    return {
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+    }
+
 def get_original_risk_summary(rec: Dict[str, Any], tau: float) -> Dict[str, Any]:
     iterative_log = rec.get("logs", {}).get("iterative_repair", {})
     iterations = iterative_log.get("iterations", [])
@@ -120,7 +135,108 @@ def get_final_risk_summary(rec: Dict[str, Any], tau: float) -> Dict[str, Any]:
     risks = rec.get("risks", [])
     return summarize_risk(risks, tau)
 
+def decide_repair_acceptance(
+    *,
+    mode: str,
+    rec: Dict[str, Any],
+    judge_client: Any,
+    current_trace: str,
+    current_answer: str,
+    candidate_trace: str,
+    candidate_answer: str,
+    old_avg_risk: float,
+    new_avg_risk: float,
+    support_tolerance: float = 0.05,
+    max_regression_risk: float = 0.35,
+) -> Dict[str, Any]:
+    improvement = old_avg_risk - new_avg_risk
+    risk_improved = improvement >= 0.0
 
+    decision = {
+        "accepted": risk_improved,
+        "reason": "risk_improved" if risk_improved else "risk_worsened",
+        "acceptance_mode": mode,
+        "risk_improvement": improvement,
+    }
+
+    if mode == "risk_only":
+        return decision
+
+    if mode == "oracle_guard":
+        if not risk_improved:
+            return decision
+
+        original_correct = answer_is_correct(
+            rec.get("task", "math"),
+            current_answer,
+            rec.get("gold_answer"),
+        )
+        candidate_correct = answer_is_correct(
+            rec.get("task", "math"),
+            candidate_answer,
+            rec.get("gold_answer"),
+        )
+
+        creates_regression = original_correct and not candidate_correct
+
+        decision.update({
+            "oracle_original_correct": original_correct,
+            "oracle_candidate_correct": candidate_correct,
+            "oracle_creates_regression": creates_regression,
+        })
+
+        if creates_regression:
+            decision["accepted"] = False
+            decision["reason"] = "oracle_regression_guard"
+
+        return decision
+
+    if mode == "judge_guard":
+        if not risk_improved:
+            return decision
+
+        try:
+            judge = judge_client.judge_repair_candidate(
+                question=rec["question"],
+                original_trace=current_trace,
+                original_answer=current_answer,
+                repaired_trace=candidate_trace,
+                repaired_answer=candidate_answer,
+            )
+        except Exception as e:
+            decision.update({
+                "accepted": False,
+                "reason": "judge_guard_error",
+                "judge_error": str(e),
+            })
+            return decision
+
+        prefer_repaired = bool(judge.get("prefer_repaired", False))
+        original_support = float(judge.get("original_answer_support", 0.0))
+        repaired_support = float(judge.get("repaired_answer_support", 0.0))
+        regression_risk = float(judge.get("regression_risk", 1.0))
+
+        support_ok = repaired_support >= original_support - support_tolerance
+        regression_ok = regression_risk <= max_regression_risk
+
+        accepted = risk_improved and prefer_repaired and support_ok and regression_ok
+
+        decision.update({
+            "accepted": accepted,
+            "reason": (
+                "judge_guard_passed"
+                if accepted
+                else "judge_guard_rejected"
+            ),
+            "judge": judge,
+            "judge_prefer_repaired": prefer_repaired,
+            "judge_support_ok": support_ok,
+            "judge_regression_ok": regression_ok,
+        })
+
+        return decision
+
+    raise ValueError(f"Unknown repair acceptance mode: {mode}")
 
 def score_record_trace(
     *,
@@ -453,6 +569,10 @@ def iterative_repair(
     tau = float(scoring_cfg.get("risk_threshold", scoring_cfg.get("tau", 0.8)))
     improvement_threshold = float(scoring_cfg.get("improvement_threshold", 0.02))
     max_iters = int(scoring_cfg.get("max_iters", 2))
+    acceptance_cfg = cfg.raw.get("repair_acceptance", {})
+    acceptance_mode = acceptance_cfg.get("mode", "risk_only")
+    support_tolerance = float(acceptance_cfg.get("support_tolerance", 0.05))
+    max_regression_risk = float(acceptance_cfg.get("max_regression_risk", 0.35))
 
     if provider == "openai":
         gen_client = OpenAIClientWrapper(model=model_name)
@@ -540,7 +660,21 @@ def iterative_repair(
             new_avg_risk = candidate_score["risk_summary"]["avg_risk"]
             improvement = old_avg_risk - new_avg_risk
 
-            accepted = improvement >= 0.0
+            acceptance = decide_repair_acceptance(
+                mode=acceptance_mode,
+                rec=rec,
+                judge_client=judge_client,
+                current_trace=current_trace,
+                current_answer=current_answer,
+                candidate_trace=candidate_trace,
+                candidate_answer=candidate_answer,
+                old_avg_risk=old_avg_risk,
+                new_avg_risk=new_avg_risk,
+                support_tolerance=support_tolerance,
+                max_regression_risk=max_regression_risk,
+            )
+
+            accepted = acceptance["accepted"]
 
             iteration_logs.append({
                 "iter": iter_idx,
@@ -552,13 +686,14 @@ def iterative_repair(
                 "new_avg_risk": new_avg_risk,
                 "improvement": improvement,
                 "accepted": accepted,
-                "continue": improvement >= improvement_threshold,
+                "acceptance": acceptance,
+                "continue": accepted and improvement >= improvement_threshold,
                 "earliest_bad_step": candidate_score["earliest_bad_step"],
                 **candidate_score["risk_summary"],
             })
 
             if not accepted:
-                stop_reason = "risk_worsened"
+                stop_reason = acceptance["reason"]
                 break
 
             current_trace = candidate_trace
@@ -586,6 +721,9 @@ def iterative_repair(
                     "max_iters": max_iters,
                     "improvement_threshold": improvement_threshold,
                     "risk_threshold": tau,
+                    "acceptance_mode": acceptance_mode,
+                    "support_tolerance": support_tolerance,
+                    "max_regression_risk": max_regression_risk,
                     "stop_reason": stop_reason,
                     "iterations": iteration_logs,
                 },
@@ -621,7 +759,13 @@ def evaluate(
 
     total = 0
     answer_evaluated = 0
+    attempt_tp = 0
+    attempt_fp = 0
+    attempt_fn = 0
 
+    accept_tp = 0
+    accept_fp = 0
+    accept_fn = 0
     original_correct_count = 0
     final_correct_count = 0
 
@@ -718,6 +862,24 @@ def evaluate(
         repair_iterations = [it for it in iterations if it.get("kind") == "repair"]
         accepted_iterations = [it for it in repair_iterations if it.get("accepted") is True]
 
+        actual_needs_repair = not original_correct
+        predicted_attempt = len(repair_iterations) > 0
+        predicted_accept = len(accepted_iterations) > 0
+
+        if actual_needs_repair and predicted_attempt:
+            attempt_tp += 1
+        elif not actual_needs_repair and predicted_attempt:
+            attempt_fp += 1
+        elif actual_needs_repair and not predicted_attempt:
+            attempt_fn += 1
+
+        if actual_needs_repair and predicted_accept:
+            accept_tp += 1
+        elif not actual_needs_repair and predicted_accept:
+            accept_fp += 1
+        elif actual_needs_repair and not predicted_accept:
+            accept_fn += 1
+
         total_repair_attempts += len(repair_iterations)
         total_accepted_repair_iterations += len(accepted_iterations)
 
@@ -786,6 +948,20 @@ def evaluate(
                 else 0.0
             ),
             "mean_iteration_logs_per_record": total_iteration_logs / total if total else 0.0,
+        },
+        "repair_detection": {
+            "attempted_repair": {
+                "tp": attempt_tp,
+                "fp": attempt_fp,
+                "fn": attempt_fn,
+                **classification_metrics(attempt_tp, attempt_fp, attempt_fn),
+            },
+            "accepted_repair": {
+                "tp": accept_tp,
+                "fp": accept_fp,
+                "fn": accept_fn,
+                **classification_metrics(accept_tp, accept_fp, accept_fn),
+            },
         },
     }
 
