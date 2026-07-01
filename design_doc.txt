@@ -1,191 +1,297 @@
-StepGuard: Iterative Process Monitoring and Targeted Suffix Repair for Improving LLM Reasoning
+StepGuard: Iterative Process Monitoring and Regression-Aware Suffix Repair for Improving LLM Reasoning
 
-Stepguard is a research pipeline for improving LLM Reasoning through the monitoring of step-by-step reasoning traces to identify the earliest risky step (first reasoning step whose risk score crosses the risk threshold) and applying targeted suffix repair. 
+StepGuard is a research pipeline for improving LLM reasoning by monitoring step-by-step reasoning traces, identifying the earliest risky step, and applying targeted suffix repair. The current framework focuses on GSM8K math reasoning, but the design leaves room for later evidence-based datasets and additional process-supervision signals.
 
-Proposal:
-LLMs often produce reasoning steps that look reasonable but contain:
-unsupported assumptions
-invalid logical jumps
-contradictions
-logical gaps
-Rather than evaluating only the final answer, StepGuard takes things a step further by evaluating the reasoning process step-by-step.
-Core pipeline:
-Generate reasoning trace + final answer 
-Split trace into reasoning steps
-Score each step (verifier + contradiction; evidence support later)
-Compute per-step risk and find earliest risky step
-Repair by regenerating the suffix from the earliest risky step
-Rescore the repaired trace
-Iterate repairs until improvement plateaus, risk worsens, or max_iters reached
-Evaluate final answer correctness and process risk reduction
-Project Structure:
+The central idea is that reasoning failures should be detected within the reasoning process, not only at the final answer. StepGuard scores each reasoning step, finds the first step whose risk exceeds a threshold, preserves the prefix before that step, and regenerates the suffix. Candidate repairs are then accepted or rejected according to an acceptance policy.
+
+
+Proposal
+
+LLMs often produce reasoning steps that look plausible but contain:
+- unsupported assumptions
+- invalid logical jumps
+- contradictions
+- logical gaps
+
+Rather than evaluating only the final answer, StepGuard evaluates the reasoning process step by step. The current framework supports:
+- trace generation
+- step splitting
+- verifier scoring with an LLM judge
+- contradiction scoring with local RoBERTa-MNLI
+- per-step risk scoring
+- earliest risky step detection
+- iterative suffix repair
+- multiple repair acceptance modes
+- evaluation of answer correctness, process risk, repair behavior, and proxy detection metrics
+
+
+Current Pipeline
+
+1. Generate a reasoning trace and final answer.
+2. Split the trace into numbered reasoning steps.
+3. Score each step with:
+   - verifier score: LLM judge p_wrong per step
+   - contradiction score: RoBERTa-MNLI contradiction probability against recent prior steps
+   - evidence support: reserved for future non-math/evidence-based tasks
+4. Combine scores into a per-step risk value.
+5. Find the earliest risky step: the first step whose risk exceeds the risk threshold.
+6. Repair by preserving the prefix before the earliest risky step and regenerating the suffix.
+7. Score the candidate repaired trace.
+8. Apply a repair acceptance policy.
+9. Iterate until there is no risky step, risk worsens, improvement plateaus, or max_iters is reached.
+10. Evaluate final answer correctness, risk reduction, repair behavior, and detection metrics.
+
+Current default experimental flow:
+
+generate -> iterative-repair -> evaluate
+
+The older score-traces and repair-traces commands remain available as single-pass/baseline commands.
+
+
+Project Structure
+
 src/
-cli.py - Typer CLI that handles commands
-config.py - Loads YAML files
-io_utils.py - JSON reader/writers
-datasets_prep.py - Huggingface dataset exporter
-scorers/
-nli.py - Roberta contradiction judge
-providers/
-Gemini_client.py - Gemini generator/judge
-Openai_client.py - Chatgpt generator/judge
+- cli.py: Typer CLI for dataset preparation, generation, scoring, repair, iterative repair, evaluation, and pipeline execution.
+- config.py: YAML config loader.
+- io_utils.py: JSONL readers/writers and manifest helpers.
+- datasets_prep.py: Hugging Face dataset exporter.
+
+src/scorers/
+- nli.py: Local RoBERTa-MNLI contradiction scorer. Uses CUDA automatically if PyTorch reports CUDA availability.
+
+src/providers/
+- openai_client.py: OpenAI trace generation, step verifier judge, suffix repair, and repair acceptance judge.
+- gemini_client.py: Gemini trace generation, step verifier judge, and suffix repair. Judge guard support is currently OpenAI-only.
+
 configs/
-Gsm8k_gemini_dev.yaml - config file for gemini runs
-Gsm8k_openai_dev.yaml - config file for openai runs
+- gsm8k_openai_dev.yaml: OpenAI GSM8K development config.
+- gsm8k_gemini_dev.yaml: Gemini GSM8K development config.
+
 data/
-raw/ - datasets exported in JSON
-runs/ - output folders containing generated/scored/repaired traces
-Data Format (JSON):
-Original trace schema:
+- raw/: exported datasets in JSONL.
+- runs/: run outputs, including generated traces, repaired traces, metrics, manifests, and per-record evaluation files.
+
+
+Configuration
+
+Current important config fields:
+
+run_name: "gsm8k_openai_dev_50_5"
+dataset_path: "data/raw/gsm8k_test_50_2.jsonl"
+output_dir: "data/runs"
+
+model:
+  provider: "openai"
+  name: "gpt-5.4-mini"
+  prompt_id: "cot_steps_v1"
+  temperature: 0.2
+  max_output_tokens: 800
+
+scoring:
+  risk_threshold: 0.20
+  improvement_threshold: 0.02
+  max_iters: 2
+
+repair_acceptance:
+  mode: "judge_guard"  # risk_only | oracle_guard | judge_guard
+  support_tolerance: 0.05
+  max_regression_risk: 0.35
+
+
+Data Format
+
+Generated trace schema:
+
 {
- "id": "...", //question id
- "question": "...", //source question
- "task": "math|nonmath", //what kind of task
- "source": "...", //dataset
- "gold_answer": "...", //ideal answer according to dataset
- "evidence": [...], //currently optional
- "model": "...", //model name (gpt-5.4-mini, gemini-3.1-flash, etc)
- "prompt_id": "...", //unique ID for current prompt
- "model_trace": "...", // step-by-step reasoning output
- "model_answer": "..." //final answer given by trace
+  "id": "...",
+  "question": "...",
+  "task": "math|nonmath",
+  "source": "...",
+  "gold_answer": "...",
+  "evidence": [],
+  "model": "...",
+  "prompt_id": "...",
+  "model_trace": "Step 1: ...\nStep 2: ...\nFinal answer: ...",
+  "model_answer": "..."
 }
 
 Scored schema:
 
 {
- "steps": ["Step 1: ...", "Step 2: ...", ...], //all steps but answer"
- "scores": {
-   "verifier": [0.0, 0.2, ...], //p_wrong per step
-   "contradiction": [0.0, 0.1, ...], //P(contradiction) per step
-   "evidence_support": null //reserved for non-math later
- },
- "risks": [0.1, 0.3, ...], // combined per-step risk
- "earliest_bad_step": null | 0 | 1 | … // first step that exceeds risk threshold
+  "steps": ["Step 1: ...", "Step 2: ..."],
+  "scores": {
+    "verifier": [0.0, 0.2],
+    "contradiction": [0.0, 0.1],
+    "evidence_support": null
+  },
+  "risks": [0.01, 0.15],
+  "earliest_bad_step": null,
+  "risk_summary": {
+    "avg_risk": 0.08,
+    "max_risk": 0.15,
+    "num_risky_steps": 0
+  }
 }
 
-Repaired schema:
+Single-pass repaired schema:
+
 {
-"repaired_trace": "...", //full repaired trace (prefix + regenerated suffix)
-"repaired_answer": "...", //final answer from repaired trace
-"logs": {
-"repair": {
-"performed": true|false,
-"k": 1,
-"next_step_number": 2
-}
-}
+  "repaired_trace": "...",
+  "repaired_answer": "...",
+  "logs": {
+    "repair": {
+      "performed": true,
+      "k": 1,
+      "next_step_number": 2
+    }
+  }
 }
 
-Iterative repair schema
+Iterative repaired schema:
+
 {
   "final_trace": "...",
   "final_answer": "...",
-  "final_steps": [...],
-  "final_scores": {...},
-  "final_risks": [...],
-  "final_earliest_bad_step": 1,
+  "final_steps": [],
+  "final_scores": {},
+  "final_risks": [],
+  "final_earliest_bad_step": null,
   "logs": {
     "iterative_repair": {
       "max_iters": 2,
       "improvement_threshold": 0.02,
-      "risk_threshold": 0.1,
-      "stop_reason": "risk_worsened",
-      "iterations": [...]
+      "risk_threshold": 0.2,
+      "acceptance_mode": "judge_guard",
+      "support_tolerance": 0.05,
+      "max_regression_risk": 0.35,
+      "stop_reason": "improvement_below_threshold",
+      "iterations": [
+        {
+          "iter": 0,
+          "kind": "original",
+          "answer": "...",
+          "earliest_bad_step": 0,
+          "avg_risk": 0.18,
+          "max_risk": 0.73,
+          "num_risky_steps": 1
+        },
+        {
+          "iter": 1,
+          "kind": "repair",
+          "k": 0,
+          "next_step_number": 1,
+          "answer": "...",
+          "old_avg_risk": 0.18,
+          "new_avg_risk": 0.04,
+          "improvement": 0.14,
+          "accepted": true,
+          "acceptance": {
+            "accepted": true,
+            "reason": "judge_guard_passed",
+            "acceptance_mode": "judge_guard",
+            "risk_improvement": 0.14
+          }
+        }
+      ]
     }
   }
 }
 
 
-CLI Commands:
+CLI Commands
 
-Prepare-dataset:
-Exports dataset into JSON format for pipeline use
+prepare-dataset:
+Exports a dataset into JSONL format for pipeline use.
 
-Generate-traces:
-Reads JSON dataset, and generates reasoning trace + answer for every question using chosen provider, returns output in generated.jsonl
+generate-traces:
+Reads a JSONL dataset and generates a reasoning trace plus final answer for each question. Writes generated.jsonl.
 
-Score-traces:
-Reads generated.jsonl and calculates verifier and contradiction scores for each step in the trace. It then uses a combination of these scores to assign a risk value. If step risk value is above threshold, it is designated a bad step. The first of these bad steps is the chosen step for earliest bad step for suffix generation, returns scored.jsonl
+score-traces:
+Reads generated.jsonl, splits traces into steps, computes verifier and contradiction scores, computes per-step risk, and finds the earliest risky step. Writes scored.jsonl. This is useful for single-pass or diagnostic runs.
 
-Repair-traces:
-Reads scored.jsonl and finds first bad step, it then keeps all the steps before it and regenerates all steps after including itself, outputs repaired.jsonl. Repairs only once.
+repair-traces:
+Reads scored.jsonl and performs one suffix repair from the earliest risky step. Writes repaired.jsonl. This is a single-pass baseline command.
 
-Iterative-repair:
-Reads generated.jsonl and runs a full repair loop. Runs score-traces to find the earliest risky step, then runs Repair-traces to repair traces. Compares old risk to new risk, and accepts repair if risk does not worsen. Repeats if improvement meets improvement_threshold while max_iters has not been reached, outputs iterative_repaired.jsonl.
+iterative-repair:
+Reads generated.jsonl, scores each trace, repairs from the earliest risky step, scores the candidate repair, applies the configured repair acceptance policy, and repeats until stopping. Writes iterative_repaired.jsonl.
 
-Evaluate:
-Reads iterative_repaired.jsonl and computes correctness, risk, and repair metrics, outputs metrics.json and evaluation_records.jsonl
+evaluate:
+Reads iterative_repaired.jsonl by default, falling back to repaired.jsonl if needed. Computes correctness, risk, repair-loop, and proxy repair-detection metrics. Writes metrics.json, evaluation_records.jsonl, and manifest.evaluate.json.
 
-Run-pipeline:
-Runs stages in order:
-generate → iterative repair → evaluate
+run-pipeline:
+Runs:
 
-Scoring:
+generate-traces -> iterative-repair -> evaluate
+
+
+Scoring
 
 Contradiction score:
-For each step i, up to 2 previous steps are defined as premise.
-RoBERTa-NLI then returns probabilities for contradiction.
-Scoring range: 0 -> no contradiction detected, 1 -> strong contradiction detected 
+For each step i, the premise is the previous one or two reasoning steps. The hypothesis is the current step. RoBERTa-MNLI returns a contradiction probability. Step 0 receives contradiction score 0.0 because there is no prior step to contradict.
+
+Range:
+- 0 means no contradiction detected.
+- 1 means strong contradiction detected.
 
 Verifier score:
-For each trace, call the judge once with the question and the list of steps.
-Scoring range: 0 ->step judged valid, 1 -> step judged invalid
+For each trace, the LLM judge receives the question and full list of reasoning steps. It returns p_wrong for each step.
 
-Risk Score:
-Combine contradiction and verifier scores, clipped to between 0 and 1.
-Experiments will modify this.
+Range:
+- 0 means the step is judged valid.
+- 1 means the step is judged invalid.
 
-Pipeline logic:
--Contradiction Scoring:
-For each step i in steps:
-    If i == 0:
-        contradiction_score = 0.0
-    Else:
-        premise = previous 1-2 steps
-        hypothesis = current step
+Current risk score:
 
-        contradiction_score = P(contradiction | premise, hypothesis)
-        using RoBERTa-MNLI
+risk[i] = min(1.0, 0.75 * verifier[i] + 0.25 * contradiction[i])
 
-    store contradiction_score for step i
+Earlier experiments used:
 
--Verifier Scoring:
-Given question and steps:
-    Send question + full step list to LLM judge
+risk[i] = min(1.0, verifier[i] + contradiction[i])
 
-    Judge returns:
-        step_index
-        verdict
-        p_wrong
+The current verifier-heavy formula was introduced because the additive formula with a low threshold over-triggered repairs and caused correct-to-wrong regressions.
 
-    For each step i:
-        verifier_score[i] = p_wrong[i]
+Earliest risky step:
 
-    If judge fails:
-        verifier_score[i] = 0.5
+earliest_bad_step = first step i where risk[i] > risk_threshold
 
--Risk Scoring:
-For each step i:
-    verifier = verifier_score[i]
-    contradiction = contradiction_score[i]
+If no step exceeds the threshold, earliest_bad_step is null and the trace is not repaired.
 
-    risk[i] = min(1.0, verifier + contradiction)
 
-    If risk[i] > risk_threshold:
-        mark step as risky
+Repair Acceptance Modes
 
--Earliest Risky Step Detection:
-earliest_bad_step = null
+StepGuard now separates repair generation from repair acceptance. A candidate repair can reduce measured risk while still making the final answer worse, so acceptance is handled by a configurable policy.
 
-For each step i in order:
-    If risk[i] > risk_threshold:
-        earliest_bad_step = i
-        stop searching
+risk_only:
+Baseline behavior. Accepts a candidate repair if average risk does not worsen.
 
-If no step crosses threshold:
-    earliest_bad_step remains null
+Acceptance rule:
 
--Iterative Repair Loop:
+new_avg_risk <= old_avg_risk
+
+oracle_guard:
+Research-only upper-bound mode. Uses the gold answer to reject repairs that would turn a correct original answer into an incorrect final answer.
+
+Acceptance rule:
+
+risk improves
+and not(original answer correct and candidate answer incorrect)
+
+This is not deployable because it uses gold labels inside the repair loop. It is useful for estimating how much improvement would be possible with a perfect regression detector.
+
+judge_guard:
+Deployable regression-aware mode for OpenAI runs. Calls an LLM repair acceptance judge after a risk-improving candidate repair. The judge compares the current trace/answer with the candidate trace/answer and returns support and regression-risk scores.
+
+Acceptance rule:
+
+risk improves
+and repaired_answer_support >= original_answer_support - support_tolerance
+and regression_risk <= max_regression_risk
+
+The judge also returns prefer_repaired, but this is logged as diagnostic information and is not required for acceptance. This makes judge_guard a regression guard rather than a strict "must be better" judge.
+
+
+Iterative Repair Loop
+
 current_trace = original model_trace
 current_answer = original model_answer
 
@@ -199,82 +305,202 @@ For iter from 1 to max_iters:
     k = earliest risky step
     prefix = steps before k
 
-    Generate candidate suffix from step k + 1
+    Generate candidate suffix starting at step k + 1
     candidate_trace = prefix + candidate suffix
 
     Score candidate_trace
 
-    old_trace_score = average risk across current steps
-    new_trace_score = average risk across candidate steps
+    old_avg_risk = average risk across current steps
+    new_avg_risk = average risk across candidate steps
+    improvement = old_avg_risk - new_avg_risk
 
-    improvement = old_trace_score - new_trace_score
+    Apply repair acceptance mode:
+        risk_only
+        oracle_guard
+        judge_guard
 
-    If improvement < 0:
-        reject candidate trace
-        stop with reason "risk_worsened"
+    If candidate is rejected:
+        stop with acceptance reason
 
-    If 0 <= improvement < improvement_threshold:
-        accept candidate trace
+    If candidate is accepted:
+        current_trace = candidate_trace
+        current_answer = candidate_answer
+        final_score = candidate_score
+
+    If improvement < improvement_threshold:
         stop with reason "improvement_below_threshold"
-
-    If improvement >= improvement_threshold:
-        accept candidate trace
-        continue to next iteration
 
 If max_iters is reached:
     stop with reason "max_iters"
 
-Write final_trace, final_answer, final scores, final risks, and iteration logs
-
--Evaluation:
-For each record in final output:
-    original_answer = model_answer
-    final_answer = final_answer or repaired_answer or model_answer
-    gold_answer = gold_answer
-
-    Compare original_answer to gold_answer
-    Compare final_answer to gold_answer
-
-    Categorize answer outcome:
-        wrong_to_correct
-        wrong_to_wrong
-        correct_to_correct
-        correct_to_wrong
-
-    Read original risk summary from iteration 0
-    Read final risk summary from final_risks
-
-    risk_delta = original_avg_risk - final_avg_risk
-
-    Count repair-loop behavior:
-        stop_reason
-        number of repair attempts
-        number of accepted repairs
-
-Aggregate all records into metrics.json
-Write per-example details to evaluation_records.jsonl
+Write final trace, final answer, final scores, final risks, and iteration logs.
 
 
+Evaluation
 
-Planned + Future Work:
-Some kind of metrics/evaluation dashboard
-StrategyQA + evidence support scoring (retrieval/evidence alignment)
-PRM model to test against Verifier LLM-judge
-Track token usage in repair loop to track how compute use scales with repair percentage
-Stretch- Try on harder datasets like Frontier Math(epochAI) and GPQA Diamond(PHD science)
-Experiments:
-LLM as Judge vs PRM model for Verifier score
-Different formulas for risk
-Different risk thresholds
-Different number of iterations for repair allowed
+For each record:
+- Compare original answer to gold answer.
+- Compare final answer to gold answer.
+- Categorize answer outcome:
+  - wrong_to_correct
+  - wrong_to_wrong
+  - correct_to_correct
+  - correct_to_wrong
+- Compute risk delta:
+  - original_avg_risk - final_avg_risk
+- Count repair-loop behavior:
+  - stop reason
+  - repair attempts
+  - accepted repair records
+  - accepted repair iterations
 
-Datasets:
-GSM8k- Math word problems, huggingface
-StrategyQA- Evidence support problems, huggingface
-PRM800K- PRM training dataset, paper
+metrics.json includes:
+- correctness:
+  - original_correct
+  - final_correct
+  - original_accuracy
+  - final_accuracy
+  - accuracy_delta
+  - answer outcome counts
+- risk:
+  - mean original/final average risk
+  - mean risk delta
+  - mean original/final max risk
+  - mean original/final number of risky steps
+- repair_loop:
+  - stop reason counts
+  - repair attempt rate
+  - accepted repair record rate
+  - accepted repair iteration rate
+  - mean iteration logs per record
+- repair_detection:
+  - attempted-repair precision, recall, F1
+  - accepted-repair precision, recall, F1
 
-Citations:
+The current repair-detection precision/recall/F1 metrics are example-level proxy metrics:
+
+positive prediction = repair attempted or accepted
+actual positive = original answer was wrong
+
+These are not first-bad-step precision/recall/F1. True first-bad-step metrics would require manually labeled reasoning traces.
 
 
+Current Experimental Results
 
+The current 100-example GSM8K experiments use the same generated traces for the calibrated comparison runs.
+
+Run summary:
+
+dev_50:
+- Original aggressive risk-only baseline.
+- Risk formula: min(1.0, verifier + contradiction)
+- Threshold: 0.10
+- Final accuracy: 0.97
+- Accuracy delta: -0.02
+- Correct-to-wrong regressions: 2
+- Repair attempt rate: 0.96
+- Accepted repair rate: 0.46
+- Mean risk delta: 0.0198
+
+dev_50_2:
+- Calibrated risk-only baseline.
+- Risk formula: 0.75 verifier + 0.25 contradiction
+- Threshold: 0.20
+- Final accuracy: 0.98
+- Accuracy delta: -0.01
+- Correct-to-wrong regressions: 1
+- Repair attempt rate: 0.14
+- Accepted repair rate: 0.11
+- Mean risk delta: 0.0023
+
+dev_50_3:
+- Calibrated risk formula plus oracle_guard.
+- Final accuracy: 0.99
+- Accuracy delta: 0.00
+- Correct-to-wrong regressions: 0
+- Repair attempt rate: 0.15
+- Accepted repair rate: 0.10
+- Mean risk delta: 0.0043
+
+dev_50_4:
+- Initial strict judge_guard requiring prefer_repaired.
+- Final accuracy: 0.99
+- Accuracy delta: 0.00
+- Correct-to-wrong regressions: 0
+- Repair attempt rate: 0.14
+- Accepted repair rate: 0.00
+- Mean risk delta: 0.0000
+- Interpretation: protected accuracy but rejected all repairs because prefer_repaired was too strict.
+
+dev_50_5:
+- Updated judge_guard that uses answer support and regression risk, with prefer_repaired logged only as diagnostic.
+- Final accuracy: 0.99
+- Accuracy delta: 0.00
+- Correct-to-wrong regressions: 0
+- Repair attempt rate: 0.14
+- Accepted repair rate: 0.09
+- Mean risk delta: 0.0025
+
+Interpretation:
+The aggressive baseline reduced measured risk the most but over-intervened and caused answer regressions. The calibrated risk formula reduced repair frequency and reduced regressions. The oracle guard showed that regression-aware acceptance can preserve original accuracy. The updated judge guard approximated this behavior without using gold answers: it preserved final accuracy, avoided correct-to-wrong regressions, and still accepted low-regression-risk repairs that reduced measured process risk.
+
+
+Research Framing
+
+Current claim:
+StepGuard has a working end-to-end pipeline for process-level reasoning monitoring and targeted suffix repair. Early experiments show that both risk calibration and repair acceptance policy strongly affect the tradeoff between process-risk reduction and final-answer stability.
+
+Important limitation:
+Current results are preliminary and use a 100-example GSM8K subset. The repair-detection precision/recall/F1 metrics use final-answer correctness as a proxy label, not human-labeled hallucination or first-bad-step annotations.
+
+Current strongest non-oracle setting:
+Verifier-heavy risk scoring with threshold 0.20 and judge_guard acceptance.
+
+
+Planned and Future Work
+
+Near-term:
+- Run larger batches, such as 500 GSM8K examples.
+- Add automated ablation support for risk formulas and thresholds.
+- Compare risk_only, oracle_guard, and judge_guard on larger samples.
+- Add better timing and token-usage logging to manifests.
+- Improve result tables and figures for thesis reporting.
+
+Detector ablations:
+- verifier only
+- contradiction only
+- combined verifier + contradiction
+- different risk formulas:
+  - additive
+  - verifier-heavy weighted
+  - max signal
+  - probabilistic OR
+- different risk thresholds:
+  - 0.10
+  - 0.20
+  - 0.30
+  - 0.40
+
+Future extensions:
+- StrategyQA and evidence support scoring.
+- Retrieval/evidence alignment for non-math tasks.
+- PRM model comparison against the LLM verifier judge.
+- Human annotation of first bad step for true detection precision/recall/F1.
+- Token usage and compute scaling analysis.
+- Harder datasets such as GPQA Diamond or FrontierMath-style tasks.
+
+
+Datasets
+
+Current:
+- GSM8K: math word problems from Hugging Face.
+
+Planned:
+- StrategyQA: evidence-oriented reasoning questions.
+- PRM800K: process supervision dataset.
+
+
+Citations
+
+To be added.
 

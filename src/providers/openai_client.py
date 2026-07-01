@@ -173,7 +173,7 @@ Rules:
 
 You will compare an ORIGINAL solution and a REPAIRED solution for the same math problem.
 
-Your job is to decide whether the repaired solution is more likely to be correct and should replace the original.
+Your job is to estimate whether accepting the repaired solution would risk making the answer worse. The repaired solution does not need to be better than the original; it only needs to be similarly supported and low-risk.
 
 Return JSON ONLY in this schema:
 {{
@@ -189,7 +189,7 @@ Definitions:
 - original_answer_support: probability from 0 to 1 that the original answer is supported by the reasoning.
 - repaired_answer_support: probability from 0 to 1 that the repaired answer is supported by the reasoning.
 - regression_risk: probability from 0 to 1 that the repair made the answer worse.
-- prefer_repaired: true only if the repaired solution is more likely correct than the original.
+- prefer_repaired: true if the repaired solution is clearly better than the original. If both are similarly correct, prefer_repaired may be false.
 
 QUESTION:
 {question.strip()}

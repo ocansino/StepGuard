@@ -1,0 +1,61 @@
+{
+  "input_path": "data\\runs\\gsm8k_openai_dev_15\\iterative_repaired.jsonl",
+  "total_records": 15,
+  "answer_evaluated_records": 15,
+  "correctness": {
+    "original_correct": 14,
+    "final_correct": 14,
+    "original_accuracy": 0.9333333333333333,
+    "final_accuracy": 0.9333333333333333,
+    "accuracy_delta": 0.0,
+    "outcomes": {
+      "wrong_to_correct": 0,
+      "wrong_to_wrong": 1,
+      "correct_to_correct": 14,
+      "correct_to_wrong": 0,
+      "missing_gold_or_answer": 0
+    }
+  },
+  "risk": {
+    "mean_original_avg_risk": 0.06587874208949505,
+    "mean_final_avg_risk": 0.05150500331022259,
+    "mean_risk_delta": 0.01437373877927247,
+    "mean_original_max_risk": 0.16421604498227438,
+    "mean_final_max_risk": 0.12737976402044296,
+    "mean_original_num_risky_steps": 0.3333333333333333,
+    "mean_final_num_risky_steps": 0.2
+  },
+  "repair_loop": {
+    "stop_reasons": {
+      "no_bad_step": 11,
+      "risk_worsened": 3,
+      "improvement_below_threshold": 1
+    },
+    "records_with_repair_attempt": 4,
+    "records_with_accepted_repair": 3,
+    "total_repair_attempts": 6,
+    "total_accepted_repair_iterations": 3,
+    "repair_attempt_rate": 0.26666666666666666,
+    "accepted_repair_record_rate": 0.2,
+    "accepted_repair_iteration_rate": 0.5,
+    "mean_iteration_logs_per_record": 1.4
+  },
+  "repair_detection": {
+    "attempted_repair": {
+      "tp": 1,
+      "fp": 3,
+      "fn": 0,
+      "precision": 0.25,
+      "recall": 1.0,
+      "f1": 0.4
+    },
+    "accepted_repair": {
+      "tp": 1,
+      "fp": 2,
+      "fn": 0,
+      "precision": 0.3333333333333333,
+      "recall": 1.0,
+      "f1": 0.5
+    }
+  }
+}

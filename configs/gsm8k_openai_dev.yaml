@@ -1,5 +1,5 @@
-run_name: "gsm8k_openai_dev_15"
-dataset_path: "data/raw/gsm8k_test_15.jsonl"
+run_name: "gsm8k_openai_dev_50_5"
+dataset_path: "data/raw/gsm8k_test_50_2.jsonl"
 output_dir: "data/runs"
 
 model:
@@ -18,6 +18,6 @@ ablation:
   enabled: false
 
 repair_acceptance:
-  mode: "risk_only"  # risk_only | oracle_guard | judge_guard
+  mode: "judge_guard"  # risk_only | oracle_guard | judge_guard
   support_tolerance: 0.05
   max_regression_risk: 0.35

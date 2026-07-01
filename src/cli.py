@@ -219,15 +219,20 @@ def decide_repair_acceptance(
         support_ok = repaired_support >= original_support - support_tolerance
         regression_ok = regression_risk <= max_regression_risk
 
-        accepted = risk_improved and prefer_repaired and support_ok and regression_ok
+        accepted = risk_improved and support_ok and regression_ok
+
+        if accepted:
+            reason = "judge_guard_passed"
+        elif not support_ok:
+            reason = "judge_guard_support_rejected"
+        elif not regression_ok:
+            reason = "judge_guard_regression_rejected"
+        else:
+            reason = "judge_guard_rejected"
 
         decision.update({
             "accepted": accepted,
-            "reason": (
-                "judge_guard_passed"
-                if accepted
-                else "judge_guard_rejected"
-            ),
+            "reason": reason,
             "judge": judge,
             "judge_prefer_repaired": prefer_repaired,
             "judge_support_ok": support_ok,
