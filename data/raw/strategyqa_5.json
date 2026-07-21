@@ -1,0 +1,308 @@
+﻿[
+    {
+        "qid":  "49cd2c594e9715899734",
+        "term":  "Golden Gate Bridge",
+        "description":  "suspension bridge on the San Francisco Bay",
+        "question":  "Do depressed people travel to the Golden Gate Bridge often?",
+        "answer":  true,
+        "facts":  [
+                      "The Golden Gate Bridge is one of the most popular suicide spots in the USA.",
+                      "Suicide is often caused by severe depression."
+                  ],
+        "decomposition":  [
+                              "What is the ultimate end that severe depression can lead to?",
+                              "Is the Golden Gate Bridge a place where #1 is known to often happen?"
+                          ],
+        "evidence":  [
+                         [
+                             [
+                                 [
+                                     "Major depressive disorder-22"
+                                 ]
+                             ],
+                             [
+                                 [
+                                     "Suicides at the Golden Gate Bridge-4"
+                                 ],
+                                 "operation"
+                             ]
+                         ],
+                         [
+                             [
+                                 [
+                                     "Suicide-7"
+                                 ]
+                             ],
+                             [
+                                 [
+                                     "Golden Gate Bridge-50"
+                                 ]
+                             ]
+                         ],
+                         [
+                             [
+                                 [
+                                     "Suicide-1"
+                                 ]
+                             ],
+                             [
+                                 [
+                                     "Suicides at the Golden Gate Bridge-4"
+                                 ]
+                             ]
+                         ]
+                     ]
+    },
+    {
+        "qid":  "49228a8553a4448fa366",
+        "term":  "Christmas carol",
+        "description":  "Song or hymn or carol on the theme of Christmas",
+        "question":  "Did the writer of Christmas carol fast during Ramadan? ",
+        "answer":  false,
+        "facts":  [
+                      "The writer of Christmas carol is Charles Dickens, who is a Christian. ",
+                      "Christians do not fast during Ramadan. "
+                  ],
+        "decomposition":  [
+                              "Which group of people fast during Ramadan?",
+                              "Christmas carols are composed by and for which group of people?",
+                              "Are #2 and #1 the same?"
+                          ],
+        "evidence":  [
+                         [
+                             [
+                                 [
+                                     "Ramadan-1"
+                                 ]
+                             ],
+                             [
+                                 [
+                                     "Christmas and holiday season-2",
+                                     "Christmas carol-1"
+                                 ]
+                             ],
+                             [
+                                 "operation"
+                             ]
+                         ],
+                         [
+                             [
+                                 [
+                                     "Ramadan-1"
+                                 ]
+                             ],
+                             [
+                                 [
+                                     "Christmas carol-1",
+                                     "Christmas-1"
+                                 ]
+                             ],
+                             [
+                                 "operation"
+                             ]
+                         ],
+                         [
+                             [
+                                 [
+                                     "Ramadan-1"
+                                 ]
+                             ],
+                             [
+                                 [
+                                     "Christmas carol-10"
+                                 ]
+                             ],
+                             [
+                                 "operation"
+                             ]
+                         ]
+                     ]
+    },
+    {
+        "qid":  "4d20bb8dc217f39ee929",
+        "term":  "New York Public Library",
+        "description":  "Public library system in New York City",
+        "question":  "Could you go to New York Public Library and the Six Flags Great Escape in the same day?",
+        "answer":  true,
+        "facts":  [
+                      "Six Flags Great Escape is located in Lake George, NY.",
+                      "New York Public Library is located in New York City.",
+                      "Lake George is 3.5 driving hours from New York City."
+                  ],
+        "decomposition":  [
+                              "Where is Six Flags Great Escape located?",
+                              "Where is The New York Public Library located?",
+                              "How long does it take to drive from #1 to #2?",
+                              "Is #3 less than 24 hours?"
+                          ],
+        "evidence":  [
+                         [
+                             [
+                                 [
+                                     "The Great Escape and Hurricane Harbor-1"
+                                 ]
+                             ],
+                             [
+                                 [
+                                     "New York Public Library-1"
+                                 ]
+                             ],
+                             [
+                                 "no_evidence"
+                             ],
+                             [
+                                 "no_evidence"
+                             ]
+                         ],
+                         [
+                             [
+                                 [
+                                     "The Great Escape and Hurricane Harbor-1"
+                                 ]
+                             ],
+                             [
+                                 [
+                                     "New York Public Library Main Branch-1"
+                                 ]
+                             ],
+                             [
+                                 "no_evidence"
+                             ],
+                             [
+                                 "operation"
+                             ]
+                         ],
+                         [
+                             [
+                                 [
+                                     "The Great Escape and Hurricane Harbor-1"
+                                 ]
+                             ],
+                             [
+                                 [
+                                     "New York Public Library-1"
+                                 ]
+                             ],
+                             [
+                                 "no_evidence",
+                                 "operation"
+                             ],
+                             [
+                                 "no_evidence",
+                                 "operation"
+                             ]
+                         ]
+                     ]
+    },
+    {
+        "qid":  "3c8d24e1b6e89a1534bb",
+        "term":  "Canidae",
+        "description":  "family of mammals",
+        "question":  "Were any members of Canidae in Aesop\u0027s Fables?",
+        "answer":  true,
+        "facts":  [
+                      "Canidae is a family of mammals that includes dogs, foxes, and coyotes.",
+                      "Aesop\u0027s Fables was a collection of stories with animals as the main characters.",
+                      "One of the most famous stories involves a fox and a lion."
+                  ],
+        "decomposition":  [
+                              "Which animals were typical characters in Aesop\u0027s Fables?",
+                              "Do any of #1 belong to the family Canidae?"
+                          ],
+        "evidence":  [
+                         [
+                             [
+                                 [
+                                     "Aesop\u0027s Fables-53"
+                                 ]
+                             ],
+                             [
+                                 [
+                                     "Canidae-1"
+                                 ],
+                                 "operation"
+                             ]
+                         ],
+                         [
+                             [
+                                 [
+                                     "Aesop-19",
+                                     "The Boy Who Cried Wolf-1"
+                                 ],
+                                 "no_evidence"
+                             ],
+                             [
+                                 "operation"
+                             ]
+                         ],
+                         [
+                             [
+                                 [
+                                     "Aesop\u0027s Fables-65"
+                                 ]
+                             ],
+                             [
+                                 [
+                                     "Canidae-1",
+                                     "Dog-1"
+                                 ],
+                                 "operation"
+                             ]
+                         ]
+                     ]
+    },
+    {
+        "qid":  "e6fc47d0cb907a7ee266",
+        "term":  "Tonsillitis",
+        "description":  "Inflammation of the tonsils",
+        "question":  "Is strep throat harmless to singer Rita Ora after her 2020 tonsilitis surgery?",
+        "answer":  false,
+        "facts":  [
+                      "Tonsilitis is an inflammation of the tonsils.",
+                      "Singer Rita Ora had her tonsils removed in February of 2020 due to tonsilitis.",
+                      "Strep throat can still grow in the throat of people without tonsils."
+                  ],
+        "decomposition":  [
+                              "What causes strep throat?",
+                              "Does #1 only flourish when tonsils are present?"
+                          ],
+        "evidence":  [
+                         [
+                             [
+                                 [
+                                     "Streptococcal pharyngitis-1"
+                                 ]
+                             ],
+                             [
+                                 "no_evidence"
+                             ]
+                         ],
+                         [
+                             [
+                                 [
+                                     "Throat irritation-7"
+                                 ]
+                             ],
+                             [
+                                 [
+                                     "Streptococcal pharyngitis-1"
+                                 ]
+                             ]
+                         ],
+                         [
+                             [
+                                 [
+                                     "Streptococcal pharyngitis-2"
+                                 ]
+                             ],
+                             [
+                                 [
+                                     "Streptococcal pharyngitis-1"
+                                 ],
+                                 "no_evidence",
+                                 "operation"
+                             ]
+                         ]
+                     ]
+    }
+]

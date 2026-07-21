@@ -79,6 +79,39 @@ def summarize_risk(risks: List[float], tau: float) -> Dict[str, Any]:
     }
 
 
+def compute_risks(
+    verifier: List[float],
+    contradiction: List[float],
+    scoring_cfg: Dict[str, Any],
+) -> List[float]:
+    formula = scoring_cfg.get("risk_formula", "verifier_heavy")
+
+    if formula == "verifier_only":
+        return [min(1.0, v) for v in verifier]
+
+    if formula == "contradiction_only":
+        return [min(1.0, c) for c in contradiction]
+
+    if formula == "additive":
+        return [min(1.0, v + c) for v, c in zip(verifier, contradiction)]
+
+    if formula == "weighted":
+        verifier_weight = float(scoring_cfg.get("verifier_weight", 0.75))
+        contradiction_weight = float(scoring_cfg.get("contradiction_weight", 0.25))
+        return [
+            min(1.0, verifier_weight * v + contradiction_weight * c)
+            for v, c in zip(verifier, contradiction)
+        ]
+
+    if formula == "verifier_heavy":
+        return [
+            min(1.0, 0.75 * v + 0.25 * c)
+            for v, c in zip(verifier, contradiction)
+        ]
+
+    raise ValueError(f"Unknown risk_formula: {formula}")
+
+
 def gsm8k_exact_match(pred: Optional[str], gold: Optional[str]) -> bool:
     p = normalize_gsm8k_answer(pred)
     g = normalize_gsm8k_answer(gold)
@@ -250,7 +283,9 @@ def score_record_trace(
     nli: NLIScorer,
     judge_client: Any,
     tau: float,
+    scoring_cfg: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    scoring_cfg = scoring_cfg or {}
     steps = split_steps(trace)
 
     try:
@@ -285,8 +320,7 @@ def score_record_trace(
         )
         contradiction.append(p_contra)
 
-    #risks = [min(1.0, v + c) for v, c in zip(verifier, contradiction)]
-    risks = [min(1.0, 0.75 * v + 0.25 * c) for v, c in zip(verifier, contradiction)] #verifier heavy
+    risks = compute_risks(verifier, contradiction, scoring_cfg)
     earliest = next((i for i, r in enumerate(risks) if r > tau), None)
 
     risk_summary = summarize_risk(risks, tau)
@@ -442,8 +476,7 @@ def score_traces(
         evidence_support = None  # enabled later for non-math
 
         # Risk + earliest bad step
-        #risks = [min(1.0, v + c) for v, c in zip(verifier, contradiction)]
-        risks = [min(1.0, 0.75 * v + 0.25 * c) for v, c in zip(verifier, contradiction)] #verifier heavy
+        risks = compute_risks(verifier, contradiction, scoring_cfg)
         earliest = next((i for i, r in enumerate(risks) if r > tau), None)
 
         rec2 = dict(rec)
@@ -604,6 +637,7 @@ def iterative_repair(
             nli=nli,
             judge_client=judge_client,
             tau=tau,
+            scoring_cfg=scoring_cfg,
         )
 
         iteration_logs.append({
@@ -659,6 +693,7 @@ def iterative_repair(
                 nli=nli,
                 judge_client=judge_client,
                 tau=tau,
+                scoring_cfg=scoring_cfg,
             )
 
             old_avg_risk = final_score["risk_summary"]["avg_risk"]

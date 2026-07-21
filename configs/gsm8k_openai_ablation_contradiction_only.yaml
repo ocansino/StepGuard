@@ -1,0 +1,25 @@
+run_name: "gsm8k_openai_ablation_contradiction_only"
+dataset_path: "data/raw/gsm8k_test_50_2.jsonl"
+output_dir: "data/runs"
+
+model:
+  provider: "openai"
+  name: "gpt-5.4-mini"
+  prompt_id: "cot_steps_v1"
+  temperature: 0.2
+  max_output_tokens: 800
+
+scoring:
+  risk_threshold: 0.20
+  improvement_threshold: 0.02
+  max_iters: 2
+  risk_formula: "contradiction_only"
+
+ablation:
+  enabled: true
+  detector_setting: "contradiction_only"
+
+repair_acceptance:
+  mode: "judge_guard"
+  support_tolerance: 0.05
+  max_regression_risk: 0.35

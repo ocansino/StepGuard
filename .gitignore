@@ -1,0 +1,30 @@
+# Codex / local assistant state
+.agents/
+.codex/
+
+# Python cache/build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environment files
+.env
+.venv/
+venv/
+
+# Local planning and paper drafts
+action plan.txt
+paper notes.txt
+design_doc.txt
+*.pdf
+tmp_pdf_text/
+
+# Generated experiment outputs
+data/runs/
+
+# Optional: raw/prepared dataset files
+# Uncomment if you want datasets regenerated rather than committed.
+# data/raw/
