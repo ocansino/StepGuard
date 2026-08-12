@@ -1,0 +1,199 @@
+StepGuard Phase 4 Manual Runbook
+Purpose: 100-question StrategyQA experiment and Table 3 equivalent
+
+Run every command from:
+B:\Thesis\StepGuard
+
+IMPORTANT
+
+- Commands labeled MODEL/API instantiate the configured OpenAI client and may make billable API requests. Run these yourself.
+- Commands labeled LOCAL/OFFLINE do not instantiate model clients or perform NLI inference.
+- Candidate-pool construction performs model calls and NLI scoring. Treat it as MODEL/API.
+- Stop at each checkpoint and validate the saved artifact before making additional model calls.
+- Do not rerun a failed model-backed command until checking whether it left a complete reusable artifact.
+- Do not paste API keys into commands, configs, logs, or this runbook.
+
+
+Experiment layout
+
+- Generate the 100 original traces exactly once under strategyqa_openai_100_calibrated_shared.
+- Build the calibrated candidate pool once and reuse it for calibrated risk-only, oracle, strict judge, and updated judge.
+- Build a separate aggressive candidate pool because its additive risk formula and 0.10 threshold can localize different steps.
+- The aggressive pool reuses the calibrated pool's frozen original verifier and NLI scores, then recomputes risk using the aggressive formula. It does not rescore the 100 original traces.
+- Apply every acceptance policy offline to its frozen pool.
+
+
+Checkpoint 0 - Offline preflight
+
+LOCAL/OFFLINE:
+
+py -3.12 -B -m unittest discover -s tests -v
+
+Expected result:
+
+- All tests pass.
+
+
+Checkpoint A1 - Generate the 100 original traces once
+
+MODEL/API - run manually:
+
+py -3.12 -B -m src.cli generate-traces -c configs/strategyqa_openai_100_calibrated_pool.yaml
+
+Expected artifact:
+
+data/runs/strategyqa_openai_100_calibrated_shared/generated.jsonl
+
+LOCAL/OFFLINE validator:
+
+py -3.12 -B scripts/validate_phase3_artifacts.py --kind generated --artifact data/runs/strategyqa_openai_100_calibrated_shared/generated.jsonl --dataset data/prepared/strategyqa_100.jsonl --expected-count 100 --task strategyqa
+
+Manual checkpoint:
+
+- Inspect at least 10 records distributed through the file.
+- Confirm numbered reasoning, exactly one yes/no final answer, and no math-specific prompt behavior.
+- Confirm no invented citations or claims of browsing/retrieved evidence.
+- Preserve this generated.jsonl file. Every configuration must use these originals.
+
+Do not build candidate pools if the validator fails or systematic domain/format problems appear.
+
+
+Checkpoint B1 - Build the calibrated shared candidate pool
+
+MODEL/API - run manually:
+
+py -3.12 -B -m src.cli build-candidate-pool -c configs/strategyqa_openai_100_calibrated_pool.yaml
+
+Expected artifact:
+
+data/runs/strategyqa_openai_100_calibrated_shared/candidate_pool.jsonl
+
+LOCAL/OFFLINE validator:
+
+py -3.12 -B scripts/validate_phase3_artifacts.py --kind candidate-pool --artifact data/runs/strategyqa_openai_100_calibrated_shared/candidate_pool.jsonl --dataset data/prepared/strategyqa_100.jsonl --expected-count 100 --task strategyqa
+
+Record the validator's proposal, judge-result, and judge-error counts. Stop if there are systematic judge errors, missing candidates, or score-alignment failures.
+
+
+Checkpoint B2 - Build the separate aggressive candidate pool
+
+MODEL/API - run manually:
+
+py -3.12 -B -m src.cli build-candidate-pool -c configs/strategyqa_openai_100_aggressive_pool.yaml --input data/runs/strategyqa_openai_100_calibrated_shared/candidate_pool.jsonl --reuse-original-scores
+
+Expected artifact:
+
+data/runs/strategyqa_openai_100_aggressive_shared/candidate_pool.jsonl
+
+The --reuse-original-scores option preserves the calibrated pool's original verifier and NLI outputs while recomputing risk with the additive formula and 0.10 threshold. Repair candidates identified by the aggressive trigger are still generated and scored under the aggressive configuration.
+
+LOCAL/OFFLINE validator:
+
+py -3.12 -B scripts/validate_phase3_artifacts.py --kind candidate-pool --artifact data/runs/strategyqa_openai_100_aggressive_shared/candidate_pool.jsonl --dataset data/prepared/strategyqa_100.jsonl --expected-count 100 --task strategyqa
+
+Stop if this validator fails. Do not apply policies until both pools contain 100 valid records.
+
+
+Checkpoint B3 - Apply all five configurations
+
+The following five commands are LOCAL/OFFLINE. They use only frozen traces, scores, candidates, gold labels where appropriate, and saved judge outputs.
+
+Configuration 1 - Aggressive risk-only:
+
+py -3.12 -B -m src.cli apply-candidate-policy -c configs/strategyqa_openai_100_aggressive_risk_only.yaml --input data/runs/strategyqa_openai_100_aggressive_shared/candidate_pool.jsonl
+
+Configuration 2 - Calibrated risk-only:
+
+py -3.12 -B -m src.cli apply-candidate-policy -c configs/strategyqa_openai_100_calibrated_risk_only.yaml --input data/runs/strategyqa_openai_100_calibrated_shared/candidate_pool.jsonl
+
+Configuration 3 - Calibrated oracle guard:
+
+py -3.12 -B -m src.cli apply-candidate-policy -c configs/strategyqa_openai_100_oracle.yaml --input data/runs/strategyqa_openai_100_calibrated_shared/candidate_pool.jsonl
+
+Configuration 4 - Strict judge guard:
+
+py -3.12 -B -m src.cli apply-candidate-policy -c configs/strategyqa_openai_100_strict_judge.yaml --input data/runs/strategyqa_openai_100_calibrated_shared/candidate_pool.jsonl
+
+Configuration 5 - Updated judge guard:
+
+py -3.12 -B -m src.cli apply-candidate-policy -c configs/strategyqa_openai_100_updated_judge.yaml --input data/runs/strategyqa_openai_100_calibrated_shared/candidate_pool.jsonl
+
+Validate all five outputs locally:
+
+py -3.12 -B scripts/validate_phase3_artifacts.py --kind policy-output --artifact data/runs/strategyqa_openai_100_aggressive_risk_only/iterative_repaired.jsonl --dataset data/prepared/strategyqa_100.jsonl --expected-count 100 --task strategyqa
+
+py -3.12 -B scripts/validate_phase3_artifacts.py --kind policy-output --artifact data/runs/strategyqa_openai_100_calibrated_risk_only/iterative_repaired.jsonl --dataset data/prepared/strategyqa_100.jsonl --expected-count 100 --task strategyqa
+
+py -3.12 -B scripts/validate_phase3_artifacts.py --kind policy-output --artifact data/runs/strategyqa_openai_100_oracle/iterative_repaired.jsonl --dataset data/prepared/strategyqa_100.jsonl --expected-count 100 --task strategyqa
+
+py -3.12 -B scripts/validate_phase3_artifacts.py --kind policy-output --artifact data/runs/strategyqa_openai_100_strict_judge/iterative_repaired.jsonl --dataset data/prepared/strategyqa_100.jsonl --expected-count 100 --task strategyqa
+
+py -3.12 -B scripts/validate_phase3_artifacts.py --kind policy-output --artifact data/runs/strategyqa_openai_100_updated_judge/iterative_repaired.jsonl --dataset data/prepared/strategyqa_100.jsonl --expected-count 100 --task strategyqa
+
+
+Checkpoint C1 - Evaluate all five outputs
+
+All commands are LOCAL/OFFLINE:
+
+py -3.12 -B -m src.cli evaluate -c configs/strategyqa_openai_100_aggressive_risk_only.yaml
+
+py -3.12 -B -m src.cli evaluate -c configs/strategyqa_openai_100_calibrated_risk_only.yaml
+
+py -3.12 -B -m src.cli evaluate -c configs/strategyqa_openai_100_oracle.yaml
+
+py -3.12 -B -m src.cli evaluate -c configs/strategyqa_openai_100_strict_judge.yaml
+
+py -3.12 -B -m src.cli evaluate -c configs/strategyqa_openai_100_updated_judge.yaml
+
+Each run directory must contain metrics.json and evaluation_records.jsonl.
+
+
+Checkpoint C2 - Build and cross-check the table
+
+LOCAL/OFFLINE:
+
+py -3.12 -B scripts/build_strategyqa_table.py
+
+This command checks:
+
+- All runs contain 100 records.
+- All configurations have identical original accuracy.
+- Aggressive and calibrated pools use identical original traces and answers.
+- The aggressive pool reused the calibrated verifier and NLI outputs.
+- Every policy decision refers to a candidate from the correct frozen pool.
+- Accuracy transitions and proposal classifications are calculated from saved records.
+
+Expected outputs:
+
+- data/runs/strategyqa_100_results/strategyqa_table.md
+- data/runs/strategyqa_100_results/strategyqa_table.csv
+- data/runs/strategyqa_100_results/strategyqa_table.json
+- data/runs/strategyqa_100_results/proposal_analysis.jsonl
+
+
+Checkpoint C3 - Manual scientific review
+
+Review proposal_analysis.jsonl and select, when available:
+
+- One safe accepted repair.
+- One harmful candidate blocked by a guard.
+- One harmful candidate accepted by risk-only.
+- One beneficial wrong-to-correct candidate.
+- One false-positive intervention on an originally correct trace.
+- Any final correct-to-wrong or wrong-to-correct transition shown in the table.
+
+For every selected example, confirm that the automated classification matches the question, gold answer, parent answer, candidate answer, and policy decision.
+
+
+Final go/no-go rule
+
+The StrategyQA table is ready for the advisor only if:
+
+- Every validator reports PASS.
+- Judge errors are absent or individually understood and reported.
+- Original traces and original accuracy are identical across all five configurations.
+- Configurations 2-5 use one calibrated candidate pool.
+- The aggressive setting differs only in its risk formula, threshold, and resulting trigger/candidate path.
+- Every table count is reproduced from saved artifacts.
+- Qualitative labels have been manually checked.
+- The paper describes this as a closed-book 100-example public-training-subset transfer study without threshold retuning.

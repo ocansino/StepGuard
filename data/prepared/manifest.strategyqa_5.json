@@ -1,0 +1,23 @@
+{
+  "dataset_name": "strategyqa",
+  "split": "public_train_subset",
+  "input_path": "data\\raw\\strategyqa_5.json",
+  "input_sha256": "490ECAB8C04D4D7B98A7AC3DCFA8933760BC2D0A4AE6121C3F29C2AAD1100109",
+  "source_path": "data\\raw\\strategyqa_train.json",
+  "source_sha256": "728E28B7D6BDFE6DA3A0A5F8C5923113A79063D199E960CFCC9F8A3AB34CD92C",
+  "out_path": "data\\prepared\\strategyqa_5.jsonl",
+  "selection_seed": 42,
+  "num_records": 5,
+  "answer_counts": {
+    "yes": 3,
+    "no": 2
+  },
+  "qids": [
+    "49cd2c594e9715899734",
+    "49228a8553a4448fa366",
+    "4d20bb8dc217f39ee929",
+    "3c8d24e1b6e89a1534bb",
+    "e6fc47d0cb907a7ee266"
+  ],
+  "created_at_utc": "2026-07-21T04:19:28.048404+00:00"
+}

@@ -1,0 +1,38 @@
+run_name: "strategyqa_metrics_wave_concurrent_smoke"
+dataset_path: "data/prepared/strategyqa_5.jsonl"
+output_dir: "data/runs"
+task_profile: "strategyqa"
+
+model:
+  provider: "openai"
+  name: "gpt-5.4-mini"
+  prompt_id: "strategyqa_cot_steps_v1"
+  temperature: 0.2
+  max_output_tokens: 800
+
+execution:
+  metrics_enabled: true
+  max_concurrency: 3
+  generation_chunk_size: 25
+  candidate_chunk_size: 25
+  nli_batch_size: 32
+  metrics_flush_interval_events: 25
+  request_timeout_seconds: 120.0
+  max_retries: 2
+  retry_base_delay_seconds: 1.0
+  retry_jitter_fraction: 0.2
+  openai_requests_per_minute: 500
+  rate_limit_headroom_fraction: 0.8
+
+scoring:
+  risk_threshold: 0.10
+  improvement_threshold: 0.02
+  max_iters: 1
+  risk_formula: "weighted"
+  verifier_weight: 0.75
+  contradiction_weight: 0.25
+
+repair_acceptance:
+  mode: "risk_only"
+  support_tolerance: 0.05
+  max_regression_risk: 0.35

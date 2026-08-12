@@ -9,21 +9,7 @@ from typing import Tuple, List, Dict, Any
 from google import genai
 from google.genai import types
 
-
-_SYSTEM_INSTRUCTIONS = """You are a reasoning assistant.
-
-Output MUST follow this exact format:
-
-Step 1: ...
-Step 2: ...
-...
-Final answer: <answer>
-
-Rules:
-- One step per line.
-- No extra commentary outside the steps.
-- The final line MUST start with exactly: "Final answer: "
-"""
+from ..task_profiles import get_task_profile
 
 
 def extract_final_answer(text: str) -> str:
@@ -74,10 +60,12 @@ class GeminiClient:
         self,
         question: str,
         *,
+        task: str = "math",
         temperature: float = 0.2,
         max_output_tokens: int = 800,
     ) -> Tuple[str, str]:
-        prompt = _SYSTEM_INSTRUCTIONS + "\n\nProblem:\n" + question.strip()
+        profile = get_task_profile(task)
+        prompt = profile.build_generation_prompt(question, provider="gemini")
 
         resp = self._client.models.generate_content(
             model=self.model,
@@ -96,6 +84,7 @@ class GeminiClient:
         question: str,
         steps: list[str],
         *,
+        task: str = "math",
         temperature: float = 0.0,
         max_output_tokens: int = 2000,
     ) -> list[dict]:
@@ -103,39 +92,8 @@ class GeminiClient:
         Returns a list of dicts, one per step:
           {"step_index": int, "verdict": "valid|invalid|uncertain", "p_wrong": float, "notes": str}
         """
-        judge_instructions = """You are a strict step-by-step verifier for math reasoning.
-
-You will be given a QUESTION and a list of reasoning STEPS.
-Your job is to assess each step ONLY based on:
-- the question
-- earlier steps
-- basic math/logic
-
-For each step, output:
-- verdict: "valid", "invalid", or "uncertain"
-- p_wrong: a number in [0,1] meaning probability the step is wrong/invalid
-
-Rules:
-- Output JSON ONLY. No markdown. No extra text.
-- Output MUST be minified JSON on a single line (no pretty printing).
-
-JSON schema:
-{
-  "results": [
-    {"step_index": 0, "verdict": "...", "p_wrong": 0.0},
-    ...
-  ]
-}
-"""
-
-        steps_block = "\n".join([f"{i+1}. {s}" for i, s in enumerate(steps)])
-        prompt = (
-            judge_instructions
-            + "\n\nQUESTION:\n"
-            + question.strip()
-            + "\n\nSTEPS:\n"
-            + steps_block
-        )
+        profile = get_task_profile(task)
+        prompt = profile.build_verifier_prompt(question, steps, provider="gemini")
 
         resp = self._client.models.generate_content(
             model=self.model,

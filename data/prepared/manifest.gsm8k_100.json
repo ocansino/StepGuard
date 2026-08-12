@@ -1,0 +1,14 @@
+{
+  "dataset_name": "gsm8k",
+  "split": "test_subset",
+  "source_path": "data/raw/gsm8k_test.jsonl",
+  "source_sha256": "F412443CF96D4BD0F0D61E3B378CBD95358CDBB5D2E8E8B32D69DD15A7C56591",
+  "out_path": "data/prepared/gsm8k_100.jsonl",
+  "output_sha256": "98ECE44E12B1A535394ACF9B3DA881DB734C6FD85F8B60591053BEF7A5AC56EE",
+  "selection_method": "first_100_in_source_order",
+  "num_records": 100,
+  "first_id": "gsm8k_test_000000",
+  "last_id": "gsm8k_test_000099",
+  "task": "math",
+  "created_at_utc": "2026-08-11T04:07:01.749741+00:00"
+}

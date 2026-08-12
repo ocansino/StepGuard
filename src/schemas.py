@@ -8,6 +8,7 @@ def make_base_record(
     model_trace: str,
     model_answer: str,
     evidence: Optional[Any] = None,
+    metadata: Optional[Dict[str, Any]] = None,
     gold_answer: Optional[str] = None,
     task: Optional[str] = None,
     source: Optional[str] = None,
@@ -22,6 +23,8 @@ def make_base_record(
     }
     if evidence is not None:
         rec["evidence"] = evidence
+    if metadata is not None:
+        rec["metadata"] = metadata
     if gold_answer is not None:
         rec["gold_answer"] = gold_answer
     if task is not None:

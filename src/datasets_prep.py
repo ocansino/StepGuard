@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
-from datasets import load_dataset
+from .task_profiles import normalize_strategyqa_answer
 
 
 @dataclass
@@ -44,6 +45,8 @@ def prepare_gsm8k(split: str, out_path: Path) -> int:
       - task = "math"
       - source
     """
+    from datasets import load_dataset
+
     ds = load_dataset("gsm8k", "main", split=split)
 
     rows = []
@@ -92,9 +95,11 @@ def prepare_strategyqa(split: str, out_path: Path) -> int:
     For now we store:
       - question
       - gold_answer
-      - task = "nonmath"
+      - task = "strategyqa"
       - source
     """
+    from datasets import load_dataset
+
     ds = load_dataset("strategyqa", split=split)
 
     rows = []
@@ -113,7 +118,7 @@ def prepare_strategyqa(split: str, out_path: Path) -> int:
         rid = f"strategyqa_{split}_{i:06d}"
         row = {
             "id": rid,
-            "task": "nonmath",
+            "task": "strategyqa",
             "source": f"strategyqa/{split}",
             "question": q,
         }
@@ -132,3 +137,112 @@ def prepare_strategyqa(split: str, out_path: Path) -> int:
     )
     _write_manifest(out_path.parent / f"manifest.strategyqa.{split}.json", manifest)
     return n
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file_obj:
+        for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest().upper()
+
+
+def prepare_strategyqa_local(
+    input_path: Path,
+    out_path: Path,
+    *,
+    source_path: Optional[Path] = None,
+    selection_seed: int = 42,
+) -> int:
+    """Convert a local StrategyQA JSON array into StepGuard's JSONL schema."""
+    input_path = Path(input_path)
+    out_path = Path(out_path)
+    source_path = Path(source_path) if source_path is not None else input_path
+
+    # utf-8-sig accepts ordinary UTF-8 and files written with a BOM.
+    with input_path.open("r", encoding="utf-8-sig") as file_obj:
+        raw_records = json.load(file_obj)
+
+    if not isinstance(raw_records, list):
+        raise ValueError(
+            f"StrategyQA input must be a JSON array, got {type(raw_records).__name__}"
+        )
+
+    rows = []
+    qids = []
+    seen_qids = set()
+    answer_counts = {"yes": 0, "no": 0}
+
+    metadata_fields = (
+        "term",
+        "description",
+        "facts",
+        "decomposition",
+        "evidence",
+    )
+
+    for index, example in enumerate(raw_records):
+        if not isinstance(example, dict):
+            raise ValueError(f"StrategyQA record {index} is not a JSON object")
+
+        qid = str(example.get("qid", "")).strip()
+        question = str(example.get("question", "")).strip()
+        if not qid:
+            raise ValueError(f"StrategyQA record {index} is missing qid")
+        if qid in seen_qids:
+            raise ValueError(f"Duplicate StrategyQA qid: {qid}")
+        if not question:
+            raise ValueError(f"StrategyQA record {qid} is missing question")
+
+        raw_answer = example.get("answer")
+        if isinstance(raw_answer, bool):
+            gold_answer = "yes" if raw_answer else "no"
+        else:
+            gold_answer = normalize_strategyqa_answer(raw_answer)
+        if gold_answer is None:
+            raise ValueError(
+                f"StrategyQA record {qid} has an unsupported answer: {raw_answer!r}"
+            )
+
+        metadata = {
+            field: example[field]
+            for field in metadata_fields
+            if field in example
+        }
+
+        rows.append(
+            {
+                "id": qid,
+                "task": "strategyqa",
+                "source": "strategyqa/public_train",
+                "question": question,
+                "gold_answer": gold_answer,
+                "metadata": metadata,
+            }
+        )
+        qids.append(qid)
+        seen_qids.add(qid)
+        answer_counts[gold_answer] += 1
+
+    count = _write_jsonl(out_path, rows)
+    manifest = {
+        "dataset_name": "strategyqa",
+        "split": "public_train_subset",
+        "input_path": str(input_path),
+        "input_sha256": _sha256(input_path),
+        "source_path": str(source_path),
+        "source_sha256": _sha256(source_path),
+        "out_path": str(out_path),
+        "selection_seed": selection_seed,
+        "num_records": count,
+        "answer_counts": answer_counts,
+        "qids": qids,
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    manifest_path = out_path.parent / f"manifest.{out_path.stem}.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return count

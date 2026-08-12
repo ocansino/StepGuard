@@ -18,6 +18,6 @@ ablation:
   enabled: false
 
 repair_acceptance:
-  mode: "judge_guard"  # risk_only | oracle_guard | judge_guard
+  mode: "judge_guard"  # risk_only | oracle_guard | strict_judge_guard | judge_guard
   support_tolerance: 0.05
   max_regression_risk: 0.35

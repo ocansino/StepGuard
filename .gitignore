@@ -28,3 +28,7 @@ data/runs/
 # Optional: raw/prepared dataset files
 # Uncomment if you want datasets regenerated rather than committed.
 # data/raw/
+
+# Temporary test and benchmark artifacts
+tmp/
+tests/tmp*/
