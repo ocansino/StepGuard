@@ -31,6 +31,7 @@ from .generation_checkpoint import (
 
 from .providers.gemini_client import GeminiClient
 from .providers.openai_client import OpenAIClientWrapper
+from .providers.mistral_client import MistralClientWrapper
 
 from .scorers.nli import NLIScorer
 from .rate_limiter import RequestRateLimiter
@@ -118,6 +119,114 @@ def create_openai_rate_limiter(
             )
         ),
         metrics=metrics,
+    )
+
+def _require_positive_mistral_limit(
+    execution_cfg: Dict[str, Any],
+    name: str,
+) -> float:
+    value = execution_cfg.get(name)
+
+    if value is None:
+        raise ValueError(
+            f"{name} must be filled from the account-specific "
+            "Mistral Admin Panel limits before model-backed execution"
+        )
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be numeric") from error
+
+    if numeric_value <= 0:
+        raise ValueError(f"{name} must be greater than zero")
+
+    return numeric_value
+
+
+def create_mistral_rate_limiter(
+    execution_cfg: Dict[str, Any],
+    metrics: ExecutionMetrics,
+) -> RequestRateLimiter:
+    requests_per_second = _require_positive_mistral_limit(
+        execution_cfg,
+        "mistral_requests_per_second",
+    )
+
+    # Required preflight metadata. Current RequestRateLimiter enforces
+    # request cadence; token totals remain visible in execution metrics.
+    _require_positive_mistral_limit(
+        execution_cfg,
+        "mistral_tokens_per_minute",
+    )
+    
+
+    return RequestRateLimiter(
+        requests_per_minute=requests_per_second * 60.0,
+        headroom_fraction=float(
+            execution_cfg.get(
+                "rate_limit_headroom_fraction",
+                0.8,
+            )
+        ),
+        metrics=metrics,
+        wait_name="mistral.request_rate_limit",
+    )
+
+def _require_positive_gemini_limit(
+    execution_cfg: Dict[str, Any],
+    name: str,
+) -> float:
+    value = execution_cfg.get(name)
+
+    if value is None:
+        raise ValueError(
+            f"{name} must be filled from the account-specific "
+            "Google AI Studio rate limits before model-backed "
+            "execution"
+        )
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be numeric") from error
+
+    if numeric_value <= 0:
+        raise ValueError(f"{name} must be greater than zero")
+
+    return numeric_value
+
+
+def create_gemini_rate_limiter(
+    execution_cfg: Dict[str, Any],
+    metrics: ExecutionMetrics,
+) -> RequestRateLimiter:
+    requests_per_minute = _require_positive_gemini_limit(
+        execution_cfg,
+        "gemini_requests_per_minute",
+    )
+
+    # Required preflight metadata. The current limiter enforces request
+    # cadence; token and daily totals remain visible in execution metrics.
+    _require_positive_gemini_limit(
+        execution_cfg,
+        "gemini_tokens_per_minute",
+    )
+    _require_positive_gemini_limit(
+        execution_cfg,
+        "gemini_requests_per_day",
+    )
+
+    return RequestRateLimiter(
+        requests_per_minute=requests_per_minute,
+        headroom_fraction=float(
+            execution_cfg.get(
+                "rate_limit_headroom_fraction",
+                0.8,
+            )
+        ),
+        metrics=metrics,
+        wait_name="gemini.request_rate_limit",
     )
 
 def normalize_gsm8k_answer(text: Optional[str]) -> Optional[str]:
@@ -511,21 +620,28 @@ def generate_traces(
             "generation_chunk_size must be a positive integer"
         )
     
-    openai_execution_options = resolve_openai_execution_options(
+    request_execution_options = resolve_openai_execution_options(
         execution_cfg
     )
 
-    if provider not in {"openai", "gemini"}:
+    if provider not in {"openai", "gemini", "mistral"}:
         raise ValueError(f"Unknown provider: {provider}")
 
-    openai_rate_limiter = (
-        create_openai_rate_limiter(
+    if provider == "openai":
+        provider_rate_limiter = create_openai_rate_limiter(
             execution_cfg,
             metrics,
         )
-        if provider == "openai"
-        else None
-    )
+    elif provider == "mistral":
+        provider_rate_limiter = create_mistral_rate_limiter(
+            execution_cfg,
+            metrics,
+        )
+    else:
+        provider_rate_limiter = create_gemini_rate_limiter(
+            execution_cfg,
+            metrics,
+        )
 
     manifest = make_manifest(
         cfg.run_name,
@@ -586,11 +702,23 @@ def generate_traces(
             client = OpenAIClientWrapper(
                 model=model_name,
                 metrics=metrics,
-                rate_limiter=openai_rate_limiter,
-                **openai_execution_options,
+                rate_limiter=provider_rate_limiter,
+                **request_execution_options,
+            )
+        elif provider == "mistral":
+            client = MistralClientWrapper(
+                model=model_name,
+                metrics=metrics,
+                rate_limiter=provider_rate_limiter,
+                **request_execution_options,
             )
         else:
-            client = GeminiClient(model=model_name)
+            client = GeminiClient(
+                model=model_name,
+                metrics=metrics,
+                rate_limiter=provider_rate_limiter,
+                **request_execution_options,
+            )
 
         thread_state.generation_client = client
         return client
@@ -969,21 +1097,28 @@ def build_candidate_pool(
             "nli_batch_size must be a positive integer"
         )
 
-    openai_execution_options = resolve_openai_execution_options(
+    request_execution_options = resolve_openai_execution_options(
         execution_cfg
     )
 
-    if provider not in {"openai", "gemini"}:
+    if provider not in {"openai", "gemini", "mistral"}:
         raise ValueError(f"Unknown provider: {provider}")
 
-    openai_rate_limiter = (
-        create_openai_rate_limiter(
+    if provider == "openai":
+        provider_rate_limiter = create_openai_rate_limiter(
             execution_cfg,
             metrics,
         )
-        if provider == "openai"
-        else None
-    )
+    elif provider == "mistral":
+        provider_rate_limiter = create_mistral_rate_limiter(
+            execution_cfg,
+            metrics,
+        )
+    else:
+        provider_rate_limiter = create_gemini_rate_limiter(
+            execution_cfg,
+            metrics,
+        )
 
     scoring_cfg = cfg.raw.get("scoring", {})
     tau = float(
@@ -1021,11 +1156,23 @@ def build_candidate_pool(
             client = OpenAIClientWrapper(
                 model=model_name,
                 metrics=metrics,
-                rate_limiter=openai_rate_limiter,
-                **openai_execution_options,
+                rate_limiter=provider_rate_limiter,
+                **request_execution_options,
+            )
+        elif provider == "mistral":
+            client = MistralClientWrapper(
+                model=model_name,
+                metrics=metrics,
+                rate_limiter=provider_rate_limiter,
+                **request_execution_options,
             )
         else:
-            client = GeminiClient(model=model_name)
+            client = GeminiClient(
+                model=model_name,
+                metrics=metrics,
+                rate_limiter=provider_rate_limiter,
+                **request_execution_options,
+            )
 
         setattr(thread_state, attribute, client)
         return client

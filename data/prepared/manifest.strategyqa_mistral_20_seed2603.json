@@ -1,0 +1,49 @@
+{
+  "dataset_name": "strategyqa",
+  "split": "exploratory_cross_model_transfer",
+  "selection_algorithm": "random.Random(seed).sample after smoke-ID exclusion; records restored to source order",
+  "selection_seed": 2603,
+  "source_path": "data/prepared/strategyqa_100.jsonl",
+  "source_sha256": "b6faad9102159b623491f4683c47684059314ab70aa69109577729ca5feea501",
+  "source_records": 100,
+  "excluded_smoke_path": "data/prepared/strategyqa_5.jsonl",
+  "excluded_smoke_sha256": "dea4bb825a634e0db94082ff48c2ab3c349c65cd18a5ffa654b29d7eaa08cd42",
+  "excluded_smoke_ids": [
+    "3c8d24e1b6e89a1534bb",
+    "49228a8553a4448fa366",
+    "49cd2c594e9715899734",
+    "4d20bb8dc217f39ee929",
+    "e6fc47d0cb907a7ee266"
+  ],
+  "eligible_records": 100,
+  "output_path": "data/prepared/strategyqa_mistral_20_seed2603.jsonl",
+  "output_sha256": "f0a0ec86ea890d69409734fe3805fa4bc4c2f464dd34d5683d54eb42436c1433",
+  "num_records": 20,
+  "answer_counts": {
+    "no": 12,
+    "yes": 8
+  },
+  "selected_ids": [
+    "ed81a7d100d85c51ccae",
+    "52e1b2df624813a9d66b",
+    "be3458c61d6f0deee9d8",
+    "99de7a464b1a292868f3",
+    "1061271843722fb7a225",
+    "b88ba16883b786c8469b",
+    "643a517d0d0f0d2944a3",
+    "c72aa50ebf75e16dfac5",
+    "316ea9032a8d63df7c91",
+    "ec71dcb7d6ace3e73ef9",
+    "e1f93419cb9a2f1d06ca",
+    "30b9ff6506a31671b4d3",
+    "691c8df42c886d6db9d4",
+    "423d83b2533271615c06",
+    "ba8d04adf8848e0d28a7",
+    "b1d517cad0745d8618d2",
+    "13043933149b7952472f",
+    "01c3faf4915a44133f60",
+    "b8de21dae500bfa66b7b",
+    "425683ababbbc31c733c"
+  ],
+  "created_at_utc": "2026-08-30T23:55:51.657545+00:00"
+}

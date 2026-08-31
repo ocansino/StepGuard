@@ -1,0 +1,46 @@
+# MANUAL FIVE-RECORD MISTRAL SMOKE RUN.
+# RPS and TPM were copied from Admin Panel > API > Limits for this account.
+# No tokens-per-month value is exposed there for text models; null means
+# "not published", not zero or unlimited.
+
+run_name: "gsm8k_mistral_small_2603_smoke_5_shared"
+dataset_path: "data/raw/gsm8k_test_5.jsonl"
+output_dir: "data/runs"
+task_profile: "math"
+
+model:
+  provider: "mistral"
+  name: "mistral-small-2603"
+  prompt_id: "cot_steps_v1"
+  temperature: 0.2
+  max_output_tokens: 800
+
+execution:
+  metrics_enabled: true
+  max_concurrency: 1
+  generation_chunk_size: 5
+  candidate_chunk_size: 5
+  nli_batch_size: 32
+  metrics_flush_interval_events: 1
+  request_timeout_seconds: 120.0
+  max_retries: 2
+  retry_base_delay_seconds: 1.0
+  retry_jitter_fraction: 0.2
+  mistral_requests_per_second: 0.83
+  mistral_tokens_per_minute: 50000
+  mistral_monthly_token_allowance: null
+  # Conservative smoke-only cadence: 0.83 RPS * 0.2 = 0.166 RPS.
+  rate_limit_headroom_fraction: 0.2
+
+scoring:
+  risk_threshold: 0.20
+  improvement_threshold: 0.02
+  max_iters: 2
+  risk_formula: "weighted"
+  verifier_weight: 0.75
+  contradiction_weight: 0.25
+
+repair_acceptance:
+  mode: "risk_only"
+  support_tolerance: 0.05
+  max_regression_risk: 0.35

@@ -9,8 +9,14 @@ from time import perf_counter, sleep
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
-from google import genai
-from google.genai import errors, types
+
+try:
+    from mistralai.client import Mistral
+    from mistralai.client.utils import BackoffStrategy, RetryConfig
+except ImportError:
+    Mistral = None
+    BackoffStrategy = None
+    RetryConfig = None
 
 from ..execution_metrics import ExecutionMetrics
 from ..rate_limiter import RequestRateLimiter
@@ -38,49 +44,15 @@ def _read_value(obj: Any, name: str) -> Any:
     return getattr(obj, name, None)
 
 
-def _extract_json(text: str) -> Dict[str, Any]:
-    text = text.strip()
-    if not text:
-        raise ValueError("Empty Gemini JSON response")
-
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text).strip()
-
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            raise ValueError(
-                f"Could not parse JSON from Gemini response: {text[:200]}"
-            )
-        parsed = json.loads(text[start:end + 1])
-
-    if not isinstance(parsed, dict):
-        raise ValueError("Gemini returned JSON that is not an object")
-
-    return parsed
-
-
-def _extract_gemini_usage(response: Any) -> Dict[str, int]:
-    usage = _read_value(response, "usage_metadata")
+def _extract_mistral_usage(response: Any) -> Dict[str, int]:
+    usage = _read_value(response, "usage")
     if usage is None:
         return {}
 
     candidates = {
-        "input_tokens": _read_value(usage, "prompt_token_count"),
-        "output_tokens": _read_value(usage, "candidates_token_count"),
-        "total_tokens": _read_value(usage, "total_token_count"),
-        "cached_input_tokens": _read_value(
-            usage,
-            "cached_content_token_count",
-        ),
-        "reasoning_output_tokens": _read_value(
-            usage,
-            "thoughts_token_count",
-        ),
+        "input_tokens": _read_value(usage, "prompt_tokens"),
+        "output_tokens": _read_value(usage, "completion_tokens"),
+        "total_tokens": _read_value(usage, "total_tokens"),
     }
 
     return {
@@ -90,21 +62,56 @@ def _extract_gemini_usage(response: Any) -> Dict[str, int]:
     }
 
 
+def _extract_mistral_text(response: Any) -> str:
+    choices = _read_value(response, "choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+
+    message = _read_value(choices[0], "message")
+    content = _read_value(message, "content")
+
+    if isinstance(content, str):
+        return content.strip()
+
+    if not isinstance(content, list):
+        return ""
+
+    parts: List[str] = []
+
+    for item in content:
+        if isinstance(item, str):
+            parts.append(item)
+            continue
+
+        text = _read_value(item, "text")
+        if isinstance(text, str):
+            parts.append(text)
+
+    return "\n".join(parts).strip()
+
+
+def _parse_json_object(text: str) -> Dict[str, Any]:
+    start = text.find("{")
+    end = text.rfind("}")
+
+    if start != -1 and end != -1 and end > start:
+        text = text[start:end + 1]
+
+    parsed = json.loads(text)
+    if not isinstance(parsed, dict):
+        raise ValueError("Mistral returned JSON that is not an object")
+
+    return parsed
+
+
 def _status_code(error: Exception) -> Optional[int]:
-    code = getattr(error, "code", None)
-    if isinstance(code, int):
-        return code
-
-    status_code = getattr(error, "status_code", None)
-    return status_code if isinstance(status_code, int) else None
+    value = getattr(error, "status_code", None)
+    return value if isinstance(value, int) else None
 
 
-def _is_retryable_gemini_error(error: Exception) -> bool:
+def _is_retryable_mistral_error(error: Exception) -> bool:
     if isinstance(error, (httpx.RequestError, httpx.TimeoutException)):
         return True
-
-    if not isinstance(error, errors.APIError):
-        return False
 
     status_code = _status_code(error)
     return (
@@ -126,8 +133,12 @@ def _extract_retry_after_seconds(
     if not _is_rate_limit_error(error):
         return None
 
-    response = getattr(error, "response", None)
-    headers = getattr(response, "headers", None)
+    headers = getattr(error, "headers", None)
+
+    if headers is None:
+        raw_response = getattr(error, "raw_response", None)
+        headers = getattr(raw_response, "headers", None)
+
     if headers is None:
         return None
 
@@ -147,12 +158,13 @@ def _metric_error_type(error: Exception) -> str:
     status_code = _status_code(error)
     if status_code is not None:
         return f"HTTP{status_code}"
+
     return type(error).__name__
 
 
 @dataclass
-class GeminiClient:
-    model: str = "gemini-3.5-flash-lite"
+class MistralClientWrapper:
+    model: str = "mistral-small-2603"
     metrics: Optional[ExecutionMetrics] = None
     request_timeout_seconds: float = 120.0
     max_retries: int = 2
@@ -186,25 +198,42 @@ class GeminiClient:
                 "retry_jitter_fraction must be between 0 and 1"
             )
 
-        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        api_key = os.environ.get("MISTRAL_API_KEY", "").strip()
         if not api_key:
             raise RuntimeError(
-                "GEMINI_API_KEY must be set in the process environment"
+                "MISTRAL_API_KEY must be set in the process environment"
             )
 
-        self._client = genai.Client(
-            api_key=api_key,
-            http_options=types.HttpOptions(
-                timeout=int(self.request_timeout_seconds * 1000),
-                retry_options=types.HttpRetryOptions(attempts=1),
-            ),
+        if (
+            Mistral is None
+            or BackoffStrategy is None
+            or RetryConfig is None
+        ):
+            raise RuntimeError(
+                "The Mistral provider requires the mistralai package"
+            )
+
+        # StepGuard owns retry behavior so every attempt and 429 is measured.
+        retry_config = RetryConfig(
+            "none",
+            BackoffStrategy(1, 1, 1.0, 0),
+            False,
         )
 
-    def _generate_content(
+        self._client = Mistral(
+            api_key=api_key,
+            retry_config=retry_config,
+        )
+
+    def _complete(
         self,
         operation: str,
         **request: Any,
     ) -> Any:
+        request.setdefault(
+            "timeout_ms",
+            int(self.request_timeout_seconds * 1000),
+        )
         total_attempts = self.max_retries + 1
 
         for attempt_index in range(total_attempts):
@@ -214,10 +243,10 @@ class GeminiClient:
             started = perf_counter()
 
             try:
-                response = self._client.models.generate_content(**request)
+                response = self._client.chat.complete(**request)
             except Exception as error:
                 will_retry = (
-                    _is_retryable_gemini_error(error)
+                    _is_retryable_mistral_error(error)
                     and attempt_index < self.max_retries
                 )
                 retry_delay = 0.0
@@ -246,7 +275,7 @@ class GeminiClient:
 
                 if self.metrics is not None:
                     self.metrics.record_operation(
-                        provider="gemini",
+                        provider="mistral",
                         operation=operation,
                         elapsed_seconds=perf_counter() - started,
                         success=False,
@@ -263,17 +292,17 @@ class GeminiClient:
 
             if self.metrics is not None:
                 self.metrics.record_operation(
-                    provider="gemini",
+                    provider="mistral",
                     operation=operation,
                     elapsed_seconds=perf_counter() - started,
                     success=True,
-                    usage=_extract_gemini_usage(response),
+                    usage=_extract_mistral_usage(response),
                     logical_call=(attempt_index == 0),
                 )
 
             return response
 
-        raise RuntimeError("Gemini request exhausted without a result")
+        raise RuntimeError("Mistral request exhausted without a result")
 
     def _calculate_retry_delay(
         self,
@@ -281,7 +310,10 @@ class GeminiClient:
         attempt_index: int,
         error: Exception,
     ) -> float:
-        delay = self.retry_base_delay_seconds * (2 ** attempt_index)
+        delay = (
+            self.retry_base_delay_seconds
+            * (2 ** attempt_index)
+        )
 
         if delay > 0 and self.retry_jitter_fraction > 0:
             delay *= random.uniform(
@@ -306,20 +338,19 @@ class GeminiClient:
         profile = get_task_profile(task)
         prompt = profile.build_generation_prompt(
             question,
-            provider="gemini",
+            provider="mistral",
         )
 
-        response = self._generate_content(
+        response = self._complete(
             "trace_generation",
             model=self.model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=temperature,
-                max_output_tokens=max_output_tokens,
-            ),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_tokens=max_output_tokens,
+            response_format={"type": "text"},
         )
 
-        text = (response.text or "").strip()
+        text = _extract_mistral_text(response)
         return text, extract_final_answer(text)
 
     def judge_steps(
@@ -334,26 +365,26 @@ class GeminiClient:
         prompt = profile.build_verifier_prompt(
             question,
             steps,
-            provider="gemini",
+            provider="mistral",
         )
 
-        response = self._generate_content(
+        response = self._complete(
             "step_verification",
             model=self.model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.0,
-                max_output_tokens=max_output_tokens,
-                response_mime_type="application/json",
-            ),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=max_output_tokens,
+            response_format={"type": "json_object"},
         )
 
-        parsed = _extract_json((response.text or "").strip())
+        parsed = _parse_json_object(
+            _extract_mistral_text(response)
+        )
         results = parsed.get("results", [])
+
         if not isinstance(results, list):
             raise ValueError(
-                "Gemini judge returned invalid JSON: "
-                "'results' is not a list"
+                "Judge returned invalid JSON: 'results' is not a list"
             )
 
         return results
@@ -375,17 +406,16 @@ class GeminiClient:
             next_step_number,
         )
 
-        response = self._generate_content(
+        response = self._complete(
             "suffix_repair",
             model=self.model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=temperature,
-                max_output_tokens=max_output_tokens,
-            ),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_tokens=max_output_tokens,
+            response_format={"type": "text"},
         )
 
-        text = (response.text or "").strip()
+        text = _extract_mistral_text(response)
         return text, extract_final_answer(text)
 
     def judge_repair_candidate(
@@ -408,15 +438,15 @@ class GeminiClient:
             repaired_answer=repaired_answer,
         )
 
-        response = self._generate_content(
+        response = self._complete(
             "acceptance_judging",
             model=self.model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.0,
-                max_output_tokens=max_output_tokens,
-                response_mime_type="application/json",
-            ),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=max_output_tokens,
+            response_format={"type": "json_object"},
         )
 
-        return _extract_json((response.text or "").strip())
+        return _parse_json_object(
+            _extract_mistral_text(response)
+        )
