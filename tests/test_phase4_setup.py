@@ -51,12 +51,81 @@ class FrozenScoreReuseTests(unittest.TestCase):
 
 class Phase4ConfigTests(unittest.TestCase):
     def test_phase4_configs_share_frozen_dataset_and_model(self):
-        paths = sorted(Path("configs").glob("strategyqa_openai_100_*.yaml"))
-        self.assertEqual(len(paths), 7)
+        names = (
+            "strategyqa_openai_100_aggressive_pool.yaml",
+            "strategyqa_openai_100_aggressive_risk_only.yaml",
+            "strategyqa_openai_100_calibrated_pool.yaml",
+            "strategyqa_openai_100_calibrated_risk_only.yaml",
+            "strategyqa_openai_100_oracle.yaml",
+            "strategyqa_openai_100_strict_judge.yaml",
+            "strategyqa_openai_100_updated_judge.yaml",
+        )
+        paths = [Path("configs") / name for name in names]
         configs = [load_config(path) for path in paths]
         self.assertTrue(all(config.dataset_path == "data/prepared/strategyqa_100.jsonl" for config in configs))
         self.assertTrue(all(config.raw["task_profile"] == "strategyqa" for config in configs))
         self.assertEqual(len({json_model(config.raw["model"]) for config in configs}), 1)
+
+    def test_repair_scope_configs_differ_only_in_generation_mode(self):
+        suffix = load_config(
+            "configs/strategyqa_openai_100_suffix_repair_one_shot.yaml"
+        )
+        full = load_config(
+            "configs/strategyqa_openai_100_full_regeneration_one_shot.yaml"
+        )
+
+        self.assertEqual(suffix.dataset_path, full.dataset_path)
+        for section in (
+            "model",
+            "execution",
+            "scoring",
+            "repair_acceptance",
+        ):
+            self.assertEqual(
+                suffix.raw[section],
+                full.raw[section],
+            )
+
+        self.assertEqual(
+            suffix.raw["candidate_generation"]["mode"],
+            "suffix_repair",
+        )
+        self.assertEqual(
+            full.raw["candidate_generation"]["mode"],
+            "full_regeneration",
+        )
+        self.assertEqual(suffix.raw["scoring"]["max_iters"], 1)
+
+    def test_gsm8k_repair_scope_configs_differ_only_in_generation_mode(self):
+        suffix = load_config(
+            "configs/gsm8k_openai_100_suffix_repair_one_shot.yaml"
+        )
+        full = load_config(
+            "configs/gsm8k_openai_100_full_regeneration_one_shot.yaml"
+        )
+
+        self.assertEqual(suffix.dataset_path, full.dataset_path)
+        self.assertEqual(suffix.dataset_path, "data/prepared/gsm8k_100.jsonl")
+        for section in (
+            "model",
+            "execution",
+            "scoring",
+            "repair_acceptance",
+        ):
+            self.assertEqual(
+                suffix.raw[section],
+                full.raw[section],
+            )
+
+        self.assertEqual(
+            suffix.raw["candidate_generation"]["mode"],
+            "suffix_repair",
+        )
+        self.assertEqual(
+            full.raw["candidate_generation"]["mode"],
+            "full_regeneration",
+        )
+        self.assertEqual(suffix.raw["scoring"]["max_iters"], 1)
 
     def test_calibrated_policies_have_identical_scoring(self):
         names = (

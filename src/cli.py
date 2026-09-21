@@ -1061,11 +1061,33 @@ def build_candidate_pool(
     provider = model_cfg.get("provider", "openai")
     model_name = model_cfg.get("name", "gpt-5.4-mini")
     temperature = float(model_cfg.get("temperature", 0.2))
+
     max_output_tokens = int(
         model_cfg.get("max_output_tokens", 800)
     )
 
+    candidate_generation_cfg = (
+        cfg.raw.get("candidate_generation", {}) or {}
+    )
+    candidate_generation_mode = (
+        candidate_generation_cfg.get(
+            "mode",
+            "suffix_repair",
+        )
+    )
+
+    if candidate_generation_mode not in {
+        "suffix_repair",
+        "full_regeneration",
+    }:
+        raise ValueError(
+            "candidate_generation.mode must be "
+            "'suffix_repair' or 'full_regeneration'"
+        )
+
     execution_cfg = cfg.raw.get("execution", {}) or {}
+
+
     max_concurrency = int(
         execution_cfg.get("max_concurrency", 1)
     )
@@ -1198,24 +1220,35 @@ def build_candidate_pool(
         generation_client = get_provider_client("generation")
 
         try:
-            suffix_text, candidate_answer = (
-                generation_client.repair_suffix(
-                    question=request["question"],
-                    prefix_steps=request["prefix"],
-                    next_step_number=request["next_step_number"],
-                    task=request["task"],
-                    temperature=temperature,
-                    max_output_tokens=max_output_tokens,
+            if candidate_generation_mode == "full_regeneration":
+                candidate_text, candidate_answer = (
+                    generation_client.generate_trace(
+                        question=request["question"],
+                        task=request["task"],
+                        temperature=temperature,
+                        max_output_tokens=max_output_tokens,
+                    )
                 )
-            )
+            else:
+                candidate_text, candidate_answer = (
+                    generation_client.repair_suffix(
+                        question=request["question"],
+                        prefix_steps=request["prefix"],
+                        next_step_number=request["next_step_number"],
+                        task=request["task"],
+                        temperature=temperature,
+                        max_output_tokens=max_output_tokens,
+                    )
+                )
+
             return {
-                "suffix_text": suffix_text,
+                "candidate_text": candidate_text,
                 "candidate_answer": candidate_answer,
                 "error": None,
             }
         except Exception as error:
             return {
-                "suffix_text": None,
+                "candidate_text": None,
                 "candidate_answer": None,
                 "error": str(error),
             }
@@ -1628,16 +1661,26 @@ def build_candidate_pool(
                         state["scheduled_iteration"] = None
                         continue
 
-                    suffix_lines = [
-                        line.strip()
-                        for line in repair_result[
-                            "suffix_text"
-                        ].splitlines()
-                        if line.strip()
+                    candidate_text = repair_result[
+                        "candidate_text"
                     ]
-                    candidate_trace = "\n".join(
-                        request["prefix"] + suffix_lines
-                    )
+
+                    if (
+                        candidate_generation_mode
+                        == "full_regeneration"
+                    ):
+                        candidate_trace = (
+                            candidate_text.strip()
+                        )
+                    else:
+                        suffix_lines = [
+                            line.strip()
+                            for line in candidate_text.splitlines()
+                            if line.strip()
+                        ]
+                        candidate_trace = "\n".join(
+                            request["prefix"] + suffix_lines
+                        )
 
                     candidate_verification_requests.append(
                         {
@@ -1841,7 +1884,11 @@ def build_candidate_pool(
                     state["proposals"].append(
                         {
                             "iter": entry["iter"],
+                            "generation_mode": (
+                                candidate_generation_mode
+                            ),
                             "k": entry["k"],
+
                             "next_step_number": entry[
                                 "next_step_number"
                             ],
@@ -1963,6 +2010,9 @@ def build_candidate_pool(
         result = dict(record)
         result["candidate_pool"] = {
             "construction_policy": "risk_only_chain",
+            "candidate_generation_mode": (
+                candidate_generation_mode
+            ),
             "original_score_source": state[
                 "original_score_source"
             ],

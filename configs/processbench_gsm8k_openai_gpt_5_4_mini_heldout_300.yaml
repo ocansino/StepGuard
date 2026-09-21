@@ -1,0 +1,46 @@
+# BLINDED PRIMARY HELD-OUT RUN FOR PROCESSBENCH PROTOCOL V1.
+# The submitted StepGuard detector is frozen unchanged in this configuration.
+# Do not add a labels path to this file or tune from held-out results.
+
+run_name: "processbench_gsm8k_openai_gpt_5_4_mini_2026_03_17_heldout300_primary_v1"
+dataset_path: "data/prepared/processbench/protocol_v1/gsm8k_heldout_300_inputs.jsonl"
+output_dir: "data/runs"
+task_profile: "math"
+
+model:
+  provider: "openai"
+  name: "gpt-5.4-mini-2026-03-17"
+  prompt_id: "processbench_step_verification_v1"
+  temperature: 0.0
+
+execution:
+  metrics_enabled: true
+  max_concurrency: 1
+  processbench_chunk_size: 5
+  nli_batch_size: 32
+  metrics_flush_interval_events: 1
+  request_timeout_seconds: 120.0
+  max_retries: 2
+  retry_base_delay_seconds: 1.0
+  retry_jitter_fraction: 0.2
+  openai_requests_per_minute: 500
+  rate_limit_headroom_fraction: 0.8
+
+scoring:
+  risk_threshold: 0.20
+  risk_formula: "weighted"
+  verifier_weight: 0.75
+  contradiction_weight: 0.25
+
+processbench:
+  protocol_version: 1
+  protocol_manifest_sha256: "dba97c8bf06ac5c4360d7b8e86746804371d3d6718399bf4cc133958c9298432"
+  detector_plan_path: "data/prepared/processbench/protocol_v1/gsm8k_heldout_300_detector_plan.json"
+  detector_plan_sha256: "ef45589dcd02a1ccf60573c0eb16c58ace93017702753c2eafe529524d1edf80"
+  split: "gsm8k_heldout_300"
+  revision: "3bdcd5371ed567559a78f559c01c13a6deee7604"
+  expected_records: 300
+  verifier_max_output_tokens: 1200
+  strict_provider_errors: true
+  blinded: true
+  purpose: "primary_untuned_heldout_evaluation"

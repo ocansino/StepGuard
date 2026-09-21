@@ -9,11 +9,32 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+build/
+dist/
+*.egg-info/
 
 # Local environment files
 .env
+.env.*
+!.env.example
 .venv/
 venv/
+
+# Editor / operating-system files
+.vscode/
+.idea/
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.log
 
 # Local planning and paper drafts
 action plan.txt
@@ -21,13 +42,25 @@ paper notes.txt
 design_doc.txt
 *.pdf
 tmp_pdf_text/
+docs/
 
 # Generated experiment outputs
 data/runs/
+/runs/
 
-# Optional: raw/prepared dataset files
-# Uncomment if you want datasets regenerated rather than committed.
-# data/raw/
+# Downloaded/generated evaluation datasets added after the original release.
+# Keep their manifests/results in the run documentation instead of duplicating
+# full external datasets in Git.
+data/raw/processbench/
+data/prepared/processbench/
+data/raw/strategyqa_extension_*.json
+data/raw/manifest.strategyqa_extension_*.json
+data/prepared/strategyqa_extension_*.jsonl
+data/prepared/manifest.strategyqa_extension_*.json
+
+# Accidental root-level data staging directories
+/raw/
+/prepared/
 
 # Temporary test and benchmark artifacts
 tmp/

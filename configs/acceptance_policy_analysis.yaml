@@ -1,0 +1,35 @@
+analysis_name: acceptance_policy_analysis_v1
+output_dir: data/runs/acceptance_policy_analysis_v1
+
+policies:
+  - risk_only
+  - strict_judge_guard
+  - judge_guard
+  - oracle_guard
+reference_policy: judge_guard
+
+acceptance:
+  support_tolerance: 0.05
+  max_regression_risk: 0.35
+  improvement_threshold: 0.02
+
+bootstrap:
+  method: stratified_nonparametric_percentile_bootstrap
+  strata: dataset_and_original_answer_correctness
+  paired_policy_comparisons: true
+  confidence_level: 0.95
+  resamples: 10000
+  seed: 20260921
+
+utility:
+  definition: wrong_to_correct_minus_lambda_times_correct_to_wrong
+  regression_penalties: [1, 2, 4]
+
+datasets:
+  strategyqa:
+    candidate_pools:
+      - data/runs/strategyqa_openai_100_suffix_repair_one_shot/candidate_pool.jsonl
+      - data/runs/strategyqa_openai_extension_100_suffix_repair_one_shot/candidate_pool.jsonl
+  gsm8k:
+    candidate_pools:
+      - data/runs/gsm8k_openai_100_suffix_repair_one_shot/candidate_pool.jsonl
